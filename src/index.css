@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #00008b;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #579044;
+
+  --font-sans: 'Inter', sans-serif;
+}
+
+/* Custom Utilities mapping if not auto-generated or to match v3 names exactly */
+@layer utilities {
+  .bg-background {
+    background-color: white;
+  }
+
+  .text-card-foreground {
+    color: #0f172a;
+  }
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    @apply antialiased text-slate-900;
+  }
+}
