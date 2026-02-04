@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '../components/ui/button';
-import { Card, CardContent } from '../components/ui/card';
 import { Input } from '../components/ui/input';
-import { User, Shield, Lock, Mail, CreditCard, School, ArrowRight, Loader2, AlertCircle, Zap, CheckCircle2, Users, LayoutDashboard, Globe, Bot, Calendar } from 'lucide-react';
+import { Lock, Mail, CreditCard, ArrowRight, Loader2, AlertCircle, Calendar, LayoutGrid, FileText, School, Clock, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { auth, db } from '../firebase';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
@@ -15,7 +14,7 @@ const LandingPage = () => {
 
     // Auth States
     const [mode, setMode] = useState('login'); // 'login' or 'signup'
-    const [role, setRole] = useState('student'); // 'student', 'invigilator', 'admin'
+    const [role, setRole] = useState('admin'); // 'admin', 'coordinator'
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
 
@@ -24,16 +23,15 @@ const LandingPage = () => {
         email: '',
         password: '',
         name: '',
-        idNumber: '', // Matric/Staff Key
-        department: 'Software Engineering',
-        level: '100',
+        idNumber: '', // Staff Key
+        department: '',
     });
 
     useEffect(() => {
-        // Parse Role from URL query if present (optional fallback)
+        // Parse Role from URL query if present
         const searchParams = new URLSearchParams(location.search);
         const roleParam = searchParams.get('role');
-        if (roleParam && ['student', 'invigilator', 'admin'].includes(roleParam)) {
+        if (roleParam && ['admin', 'coordinator'].includes(roleParam)) {
             setRole(roleParam);
             setError(null);
         }
@@ -54,7 +52,6 @@ const LandingPage = () => {
             const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
             const user = userCredential.user;
 
-            // Fetch User Data from Firestore to verify role
             const docRef = doc(db, 'users', user.uid);
             const docSnap = await getDoc(docRef);
 
@@ -63,11 +60,10 @@ const LandingPage = () => {
                 const userRole = userData.role;
 
                 if (userRole === 'admin') navigate('/admin');
-                else if (userRole === 'invigilator') navigate('/invigilator');
-                else if (userRole === 'student') navigate('/student');
-                else setError("Unknown user role.");
+                else if (userRole === 'coordinator') navigate('/coordinator');
+                else setError("Unauthorized access.");
             } else {
-                setError("User profile not found in database.");
+                setError("User profile not found.");
             }
         } catch (err) {
             console.error("Login Error:", err);
@@ -84,7 +80,7 @@ const LandingPage = () => {
 
         // Security Check
         if (role === 'admin' && formData.idNumber !== 'ADMIN2026') return setError("Invalid Admin Staff Key.");
-        if (role === 'invigilator' && formData.idNumber !== 'INVIGILATOR2026') return setError("Invalid Invigilator Staff Key.");
+        if (role === 'coordinator' && formData.idNumber !== 'COORD2026') return setError("Invalid Coordinator Staff Key.");
 
         try {
             const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
@@ -96,21 +92,14 @@ const LandingPage = () => {
                 name: formData.name,
                 role: role,
                 department: formData.department,
-                createdAt: new Date().toISOString()
+                createdAt: new Date().toISOString(),
+                staffId: formData.idNumber
             };
-
-            if (role === 'student') {
-                userData.idNumber = formData.idNumber;
-                userData.level = formData.level;
-            } else {
-                userData.staffId = formData.idNumber;
-            }
 
             await setDoc(doc(db, 'users', user.uid), userData);
 
             if (role === 'admin') navigate('/admin');
-            else if (role === 'invigilator') navigate('/invigilator');
-            else navigate('/student');
+            else navigate('/coordinator');
 
         } catch (err) {
             console.error("Signup Error:", err);
@@ -120,82 +109,62 @@ const LandingPage = () => {
         }
     };
 
-    // Generic display for Login
-    const currentTheme = mode === 'login' ? 'bg-[#00008b]' :
-        role === 'invigilator' ? 'bg-green-600' :
-            role === 'admin' ? 'bg-slate-900' : 'bg-[#00008b]';
-
-    const currentTextTheme = mode === 'login' ? 'text-blue-600' :
-        role === 'invigilator' ? 'text-green-600' :
-            role === 'admin' ? 'text-slate-900' : 'text-blue-600';
+    const isCoordinator = role === 'coordinator';
 
     return (
-        <div className="min-h-screen flex flex-col lg:flex-row font-sans overflow-x-hidden">
+        <div className="min-h-screen flex flex-col lg:flex-row font-sans bg-white selection:bg-slate-100">
 
-            {/* LEFT SIDE: Brand & Info (Dark Gradient) */}
-            <div className="lg:w-[45%] xl:w-[40%] bg-gradient-to-br from-[#00004b] via-[#00008b] to-[#1e3a8a] text-white p-8 lg:p-12 relative overflow-hidden flex flex-col justify-between min-h-[400px] lg:min-h-screen">
-
-                {/* Decorative Background Elements */}
-                <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-500/20 rounded-full blur-[120px] -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
-                <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-indigo-500/20 rounded-full blur-[100px] translate-y-1/3 -translate-x-1/3 pointer-events-none"></div>
+            {/* LEFT SIDE: Brand & Info */}
+            <div className="lg:w-[45%] xl:w-[40%] bg-slate-900 text-white p-8 lg:p-12 relative flex flex-col justify-between min-h-[400px] lg:min-h-screen border-r border-slate-800">
+                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5 pointer-events-none" />
 
                 {/* Header / Logo Area */}
                 <motion.div
-                    initial={{ opacity: 0, y: -20 }}
+                    initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.6 }}
-                    className="relative z-10 flex justify-between items-center"
+                    transition={{ duration: 0.5 }}
+                    className="relative z-10 flex items-center gap-3"
                 >
-                    <div className="flex items-center gap-3">
-                        <div className="bg-white/10 p-2 rounded-xl backdrop-blur-md border border-white/10">
-                            <img src="/logo.png" alt="Logo" className="w-8 h-8 md:w-10 md:h-10 object-contain brightness-0 invert" />
-                        </div>
-                        <span className="text-xl md:text-2xl font-bold tracking-tight text-white">FacultyAide</span>
+                    <div className="bg-white p-1.5 rounded-lg">
+                        <img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain" />
                     </div>
-
-                    {/* Mobile Only 'Get Started' Button */}
-                    <Button
-                        onClick={() => document.getElementById('auth-card')?.scrollIntoView({ behavior: 'smooth' })}
-                        className="lg:hidden bg-white text-blue-900 hover:bg-blue-50 font-semibold text-xs px-4 h-9 rounded-full shadow-lg"
-                    >
-                        Get Started
-                    </Button>
+                    <span className="text-xl font-bold tracking-tight text-white">FacultyAide</span>
                 </motion.div>
 
                 {/* Main Content */}
                 <div className="relative z-10 flex-1 flex flex-col justify-center py-12 lg:py-0">
                     <motion.div
-                        initial={{ opacity: 0, x: -20 }}
+                        initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: 0.2, duration: 0.8 }}
+                        transition={{ delay: 0.1, duration: 0.5 }}
                     >
-                        <h1 className="text-3xl md:text-4xl lg:text-5xl font-extrabold leading-tight mb-4 md:mb-6 text-white/95">
-                            Automating <br />
-                            <span className="text-[#89CFF0]">Academic Operations.</span>
+                        <h1 className="text-4xl lg:text-5xl font-extrabold leading-tight mb-6 text-white">
+                            Academic Resource <br />
+                            <span className="text-slate-400">Management.</span>
                         </h1>
-                        <p className="text-base md:text-lg text-blue-100/90 mb-8 md:mb-10 max-w-md leading-relaxed">
-                            From <strong>timetable generation</strong> to <strong>smart seating arrangements</strong>. Experience automated classroom allocation and instant AI assistance.
+                        <p className="text-lg text-slate-300 mb-10 max-w-sm leading-relaxed font-medium">
+                            Enterprise scheduling and facility management for modern universities.
                         </p>
 
-                        <div className="space-y-3 md:space-y-4">
+                        <div className="space-y-4">
                             {[
-                                { icon: Calendar, title: "Timetable & Scheduling", desc: "Auto-generate lecture & exam schedules." },
-                                { icon: LayoutDashboard, title: "Smart Allocation", desc: "Classroom assignment & seating plans." },
-                                { icon: Bot, title: "AI Assistant", desc: "Instant query support for staff & students." }
+                                { icon: Calendar, title: "Timetable Coordination", desc: "Conflict-free automatic scheduling." },
+                                { icon: LayoutGrid, title: "Facility Administration", desc: "Manage venues, labs, and capacities." },
+                                { icon: FileText, title: "Examination Planning", desc: "Exam logistics and invigilation." }
                             ].map((item, idx) => (
                                 <motion.div
                                     key={idx}
                                     initial={{ opacity: 0, y: 10 }}
                                     animate={{ opacity: 1, y: 0 }}
-                                    transition={{ delay: 0.4 + (idx * 0.1) }}
-                                    className="flex items-center gap-4 p-3 md:p-4 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors backdrop-blur-sm"
+                                    transition={{ delay: 0.2 + (idx * 0.1) }}
+                                    className="flex items-center gap-4 group"
                                 >
-                                    <div className="bg-blue-500/20 p-2 md:p-2.5 rounded-lg text-blue-200">
-                                        <item.icon size={18} className="md:w-5 md:h-5" />
+                                    <div className="bg-slate-800 p-2.5 rounded-lg text-slate-300 group-hover:text-white group-hover:bg-slate-700 transition-colors">
+                                        <item.icon size={20} strokeWidth={1.5} />
                                     </div>
                                     <div>
-                                        <h3 className="font-semibold text-white/95 text-xs md:text-sm">{item.title}</h3>
-                                        <p className="text-[10px] md:text-xs text-blue-200/70">{item.desc}</p>
+                                        <h3 className="font-semibold text-white text-sm">{item.title}</h3>
+                                        <p className="text-xs text-slate-400">{item.desc}</p>
                                     </div>
                                 </motion.div>
                             ))}
@@ -207,45 +176,40 @@ const LandingPage = () => {
                 <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    transition={{ delay: 0.8 }}
-                    className="relative z-10 text-sm font-medium text-blue-100/90 w-full text-center"
+                    transition={{ delay: 0.5 }}
+                    className="relative z-10 text-xs font-medium text-slate-500 w-full"
                 >
-                    <p>© 2025 FacultyAide. </p>
-                    <p>Designed for Nile University, Faculty of Computing.</p>
+                    <p>© 2026 FacultyAide System v2.0</p>
                 </motion.div>
             </div>
 
-            <div id="auth-card" className="flex-1 flex flex-col justify-center items-center p-4 md:p-6 lg:p-12 xl:p-24 relative bg-slate-50">
+            {/* RIGHT SIDE: Auth Form */}
+            <div className="flex-1 flex flex-col justify-center items-center p-6 lg:p-24 bg-slate-50">
                 <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
+                    initial={{ opacity: 0, scale: 0.98 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    transition={{ duration: 0.5 }}
-                    className="w-full max-w-lg lg:max-w-2xl space-y-5 sm:space-y-8 bg-white p-5 sm:p-14 rounded-2xl sm:rounded-3xl lg:rounded-[2.5rem] shadow-xl md:shadow-2xl shadow-indigo-900/10 border border-slate-100"
+                    transition={{ duration: 0.4 }}
+                    className="w-full max-w-md bg-white p-8 rounded-2xl shadow-xl border border-slate-200"
                 >
-                    <div className="text-center">
-                        <h2 className="text-2xl md:text-4xl font-extrabold text-slate-900 mb-2 md:mb-3 tracking-tight">
-                            {mode === 'login' ? 'Welcome Back' : 'Get Started'}
+                    <div className="mb-8">
+                        <h2 className="text-2xl font-bold text-slate-900 mb-2">
+                            {mode === 'login' ? 'System Access' : 'Staff Registration'}
                         </h2>
-                        <p className="text-slate-500 text-xs md:text-lg font-medium">
+                        <p className="text-slate-500 text-sm">
                             {mode === 'login'
-                                ? 'Sign in to access your secure dashboard.'
-                                : `Joining as a ${role}. Fill in your details below.`}
+                                ? 'Secure login for authorized personnel.'
+                                : 'Create account for Administration or Coordination.'}
                         </p>
                     </div>
 
                     {error && (
-                        <motion.div
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: 'auto' }}
-                            className="bg-red-50 text-red-600 text-xs md:text-sm p-3 md:p-4 rounded-xl flex items-center gap-3 border border-red-100"
-                        >
+                        <div className="mb-6 bg-red-50 text-red-700 text-sm p-3 rounded-lg flex items-center gap-3 border border-red-100">
                             <AlertCircle size={16} className="shrink-0" />
                             <span>{error}</span>
-                        </motion.div>
+                        </div>
                     )}
 
-                    <form onSubmit={mode === 'login' ? handleLogin : handleSignup} className="space-y-4 md:space-y-6">
-
+                    <form onSubmit={mode === 'login' ? handleLogin : handleSignup} className="space-y-5">
                         <AnimatePresence mode="wait">
                             {mode === 'signup' && (
                                 <motion.div
@@ -253,119 +217,105 @@ const LandingPage = () => {
                                     initial={{ opacity: 0, height: 0 }}
                                     animate={{ opacity: 1, height: 'auto' }}
                                     exit={{ opacity: 0, height: 0 }}
-                                    transition={{ duration: 0.3 }}
-                                    className="space-y-4 md:space-y-5 overflow-hidden"
+                                    className="space-y-5 overflow-hidden"
                                 >
-                                    {/* Role Selector INSIDE signup form */}
-                                    <div className="space-y-2">
-                                        <label className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Choose your account type</label>
-                                        <div className="bg-slate-50/80 p-1.5 md:p-2 rounded-xl md:rounded-2xl flex relative border border-slate-100">
-                                            {['student', 'invigilator', 'admin'].map((r) => (
-                                                <button
-                                                    key={r}
-                                                    type="button"
-                                                    onClick={() => { setRole(r); setError(null); }}
-                                                    className={`flex-1 relative z-10 py-2 md:py-3 text-[10px] md:text-sm font-bold uppercase tracking-widest rounded-lg md:rounded-xl transition-all duration-300 ${role === r ? 'text-slate-900 shadow-sm bg-white ring-1 ring-black/5' : 'text-slate-400 hover:text-slate-600'
-                                                        }`}
-                                                >
-                                                    {r}
-                                                </button>
-                                            ))}
-                                        </div>
+                                    <div className="grid grid-cols-2 gap-3 p-1 bg-slate-100 rounded-xl">
+                                        {['admin', 'coordinator'].map((r) => (
+                                            <button
+                                                key={r}
+                                                type="button"
+                                                onClick={() => { setRole(r); setError(null); }}
+                                                className={`py-2 px-4 text-xs font-bold uppercase tracking-wider rounded-lg transition-all ${role === r ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                            >
+                                                {r === 'coordinator' ? 'Coordinator' : 'Admin'}
+                                            </button>
+                                        ))}
                                     </div>
 
-                                    <div className="space-y-4 md:space-y-5">
-                                        <div className="relative group">
-                                            <User className="absolute left-4 top-3.5 md:top-4 h-4 w-4 md:h-5 md:w-5 text-slate-400 group-focus-within:text-blue-600 transition-colors" />
-                                            <Input
-                                                className="pl-10 md:pl-12 h-11 md:h-14 bg-slate-50 border-transparent focus:bg-white focus:border-blue-200 transition-all rounded-xl md:rounded-2xl text-sm md:text-base"
-                                                name="name" placeholder="Full Name" value={formData.name} onChange={handleInputChange} required
-                                            />
-                                        </div>
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wide">Full Name</label>
+                                        <Input
+                                            className="h-11 bg-slate-50/50 border-slate-200 focus:bg-white transition-all"
+                                            name="name" placeholder="Staff Name" value={formData.name} onChange={handleInputChange} required
+                                        />
+                                    </div>
 
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wide">Staff Key</label>
                                         <div className="relative group">
-                                            <CreditCard className="absolute left-4 top-3.5 md:top-4 h-4 w-4 md:h-5 md:w-5 text-slate-400 group-focus-within:text-blue-600 transition-colors" />
+                                            <CreditCard className="absolute left-3 top-3.5 h-4 w-4 text-slate-400 group-focus-within:text-slate-800 transition-colors" />
                                             <Input
-                                                className="pl-10 md:pl-12 h-11 md:h-14 bg-slate-50 border-transparent focus:bg-white focus:border-blue-200 transition-all rounded-xl md:rounded-2xl text-sm md:text-base"
+                                                className="pl-10 h-11 bg-slate-50/50 border-slate-200 focus:bg-white transition-all"
                                                 name="idNumber"
-                                                placeholder={role === 'student' ? "ID Number" : "Staff Verification Key"}
+                                                placeholder="Enter Verification ID"
                                                 value={formData.idNumber} onChange={handleInputChange} required
                                             />
                                         </div>
-
-                                        <div className="relative group">
-                                            <School className="absolute left-4 top-3.5 md:top-4 h-4 w-4 md:h-5 md:w-5 text-slate-400 group-focus-within:text-blue-600 transition-colors" />
-                                            <select
-                                                className="w-full pl-10 md:pl-12 h-11 md:h-14 bg-slate-50 border-transparent focus:bg-white focus:border-blue-200 transition-all rounded-xl md:rounded-2xl text-xs md:text-base text-slate-700 outline-none cursor-pointer appearance-none"
-                                                name="department" value={formData.department} onChange={handleInputChange}
-                                            >
-                                                {['Software Engineering', 'Cyber Security', 'Computer Science', 'Information Technology', 'Information Systems', 'Data Science'].map(dept => (
-                                                    <option key={dept} value={dept}>{dept}</option>
-                                                ))}
-                                            </select>
-                                            <div className="absolute right-4 md:right-5 top-4 md:top-5 pointer-events-none text-slate-400 text-[10px] md:text-xs">▼</div>
-                                        </div>
-
-                                        {role === 'student' && (
-                                            <div className="relative group">
-                                                <School className="absolute left-4 top-3.5 md:top-4 h-4 w-4 md:h-5 md:w-5 text-slate-400 group-focus-within:text-blue-600 transition-colors" />
-                                                <select
-                                                    className="w-full pl-10 md:pl-12 h-11 md:h-14 bg-slate-50 border-transparent focus:bg-white focus:border-blue-200 transition-all rounded-xl md:rounded-2xl text-xs md:text-base text-slate-700 outline-none cursor-pointer appearance-none"
-                                                    name="level" value={formData.level} onChange={handleInputChange}
-                                                >
-                                                    {['100', '200', '300', '400'].map(lvl => <option key={lvl} value={lvl}>{lvl} Level</option>)}
-                                                </select>
-                                                <div className="absolute right-4 md:right-5 top-4 md:top-5 pointer-events-none text-slate-400 text-[10px] md:text-xs">▼</div>
-                                            </div>
-                                        )}
                                     </div>
+
+                                    {role === 'coordinator' && (
+                                        <div className="space-y-1.5">
+                                            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide">Department</label>
+                                            <select
+                                                name="department"
+                                                className="flex h-11 w-full rounded-md border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm ring-offset-white file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-slate-500 focus-visible:outline-none focus:bg-white transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                                                value={formData.department}
+                                                onChange={handleInputChange}
+                                                required
+                                            >
+                                                <option value="" disabled>Select Department</option>
+                                                <option value="Software Engineering">Software Engineering</option>
+                                                <option value="Computer Science">Computer Science</option>
+                                                <option value="Information Technology">Information Technology</option>
+                                                <option value="Cyber Security">Cyber Security</option>
+                                                <option value="Data Science">Data Science</option>
+                                            </select>
+                                        </div>
+                                    )}
                                 </motion.div>
                             )}
                         </AnimatePresence>
 
-                        <div className="relative group">
-                            <Mail className="absolute left-4 top-3.5 md:top-4 h-4 w-4 md:h-5 md:w-5 text-slate-400 group-focus-within:text-blue-600 transition-colors" />
-                            <Input
-                                className="pl-10 md:pl-12 h-11 md:h-14 bg-slate-50 border-transparent focus:bg-white focus:border-blue-200 transition-all rounded-xl md:rounded-2xl text-sm md:text-base"
-                                type="email" name="email"
-                                placeholder="Email Address"
-                                value={formData.email} onChange={handleInputChange} required
-                            />
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide">Email Address</label>
+                            <div className="relative group">
+                                <Mail className="absolute left-3 top-3.5 h-4 w-4 text-slate-400 group-focus-within:text-slate-800 transition-colors" />
+                                <Input
+                                    className="pl-10 h-11 bg-slate-50/50 border-slate-200 focus:bg-white transition-all"
+                                    type="email" name="email"
+                                    placeholder="user@university.edu"
+                                    value={formData.email} onChange={handleInputChange} required
+                                />
+                            </div>
                         </div>
 
-                        <div className="relative group">
-                            <Lock className="absolute left-4 top-3.5 md:top-4 h-4 w-4 md:h-5 md:w-5 text-slate-400 group-focus-within:text-blue-600 transition-colors" />
-                            <Input
-                                className="pl-10 md:pl-12 h-11 md:h-14 bg-slate-50 border-transparent focus:bg-white focus:border-blue-200 transition-all rounded-xl md:rounded-2xl text-sm md:text-base"
-                                type="password" name="password" placeholder="••••••••"
-                                value={formData.password} onChange={handleInputChange} required
-                            />
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700 uppercase tracking-wide">Password</label>
+                            <div className="relative group">
+                                <Lock className="absolute left-3 top-3.5 h-4 w-4 text-slate-400 group-focus-within:text-slate-800 transition-colors" />
+                                <Input
+                                    className="pl-10 h-11 bg-slate-50/50 border-slate-200 focus:bg-white transition-all"
+                                    type="password" name="password" placeholder="••••••••"
+                                    value={formData.password} onChange={handleInputChange} required
+                                />
+                            </div>
                         </div>
 
                         <Button
                             type="submit"
-                            className={`w-full h-11 md:h-14 text-sm md:text-lg font-bold shadow-xl shadow-blue-500/10 rounded-xl md:rounded-2xl transition-all duration-300 mt-4 md:mt-6 text-white ${currentTheme}`}
+                            className="w-full h-12 text-sm font-bold tracking-wide uppercase shadow-lg bg-slate-900 hover:bg-slate-800 text-white rounded-xl mt-2"
                             disabled={isLoading}
                         >
-                            {isLoading ? <Loader2 className="animate-spin text-white" /> : (
-                                <span className="flex items-center justify-center gap-2 md:gap-3">
-                                    {mode === 'login' ? 'Sign In' : 'Create Account'}
-                                    <ArrowRight size={18} className="md:w-5 md:h-5" />
-                                </span>
-                            )}
+                            {isLoading ? <Loader2 className="animate-spin" /> : (mode === 'login' ? 'Login to Dashboard' : 'Create Account')}
                         </Button>
                     </form>
 
-                    {/* Sign In / Sign Up Toggle INSIDE Card */}
-                    <div className="pt-4 md:pt-6 border-t border-slate-100 flex items-center justify-center gap-2 text-xs md:text-sm">
-                        <p className="text-slate-500 font-medium">
-                            {mode === 'login' ? "Don't have an account?" : "Already have an account?"}
-                        </p>
+                    <div className="pt-6 mt-6 border-t border-slate-100 text-center">
                         <button
                             onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(null); }}
-                            className={`font-bold transition-colors hover:underline ${currentTextTheme}`}
+                            className="text-xs font-bold text-slate-500 hover:text-slate-900 transition-colors uppercase tracking-wide"
                         >
-                            {mode === 'login' ? 'Create Account' : 'Sign In'}
+                            {mode === 'login' ? "Register New Account" : "Back to Login"}
                         </button>
                     </div>
                 </motion.div>

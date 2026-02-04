@@ -25,11 +25,9 @@ const AdminLayout = () => {
 
     const navItems = [
         { name: 'Dashboard Overview', icon: LayoutDashboard, path: '/admin' },
-        { name: 'Lecture Timetable', icon: CalendarDays, path: '/admin/timetable' },
-        { name: 'Exam Timetable', icon: BookOpen, path: '/admin/exams' },
-        { name: 'Classroom Mgmt', icon: Building2, path: '/admin/classrooms' },
-        { name: 'Courses', icon: Users, path: '/admin/courses' },
-        { name: 'Settings', icon: Settings, path: '/admin/settings' },
+        { name: 'Hall Management', icon: Building2, path: '/admin/classrooms' },
+        { name: 'Lecturers', icon: Users, path: '/admin/lecturers' },
+        { name: 'Course Management', icon: BookOpen, path: '/admin/courses' },
     ];
 
     return (

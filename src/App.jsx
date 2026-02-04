@@ -1,18 +1,23 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 
 import Auth from './pages/Auth';
-
 import LandingPage from './pages/LandingPage';
+
+// Admin Pages
 import AdminLayout from './layouts/AdminLayout';
 import DashboardOverview from './pages/admin/DashboardOverview';
 import ClassroomManagement from './pages/admin/ClassroomManagement';
 import Courses from './pages/admin/Courses';
-import TimetableGenerator from './pages/admin/TimetableGenerator';
-import InvigilatorDashboard from './pages/invigilator/InvigilatorDashboard';
-import ExamTimetable from './pages/admin/ExamTimetable';
-import Settings from './pages/admin/Settings';
-import StudentDashboard from './pages/student/StudentDashboard';
+import LecturerManagement from './pages/admin/LecturerManagement';
+
+// Coordinator Pages
+import CoordinatorLayout from './layouts/CoordinatorLayout';
+import CoordinatorDashboard from './pages/coordinator/DashboardOverview';
+import LectureTimetable from './pages/coordinator/LectureTimetable';
+import ExamTimetable from './pages/coordinator/ExamTimetable';
+import ConstraintSettings from './pages/coordinator/ConstraintSettings';
+import CourseManager from './pages/coordinator/CourseManager';
 
 function App() {
   return (
@@ -26,17 +31,22 @@ function App() {
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<DashboardOverview />} />
             <Route path="classrooms" element={<ClassroomManagement />} />
+            <Route path="lecturers" element={<LecturerManagement />} />
             <Route path="courses" element={<Courses />} />
-            <Route path="exams" element={<ExamTimetable />} />
-            <Route path="timetable" element={<TimetableGenerator />} />
-            <Route path="settings" element={<Settings />} />
+            {/* Redirect old routes or handle 404 if needed, for now we just have these */}
+            <Route path="*" element={<Navigate to="/admin" replace />} />
           </Route>
 
-          {/* Invigilator Routes */}
-          <Route path="/invigilator" element={<InvigilatorDashboard />} />
+          <Route path="/coordinator" element={<CoordinatorLayout />}>
+            <Route index element={<CoordinatorDashboard />} />
+            <Route path="lecture-timetable" element={<LectureTimetable />} />
+            <Route path="courses" element={<CourseManager />} />
+            <Route path="exam-timetable" element={<ExamTimetable />} />
+            <Route path="constraints" element={<ConstraintSettings />} />
+          </Route>
 
-          {/* Student Routes */}
-          <Route path="/student" element={<StudentDashboard />} />
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
     </Router>

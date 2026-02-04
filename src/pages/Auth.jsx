@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '../components/ui/card';
 import { Input } from '../components/ui/input';
-import { User, Shield, Lock, Mail, CreditCard, School, ArrowRight, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
+import { Lock, Mail, CreditCard, ArrowRight, ArrowLeft, Loader2, AlertCircle, CalendarClock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { auth, db } from '../firebase';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
@@ -13,7 +13,7 @@ const Auth = () => {
     const navigate = useNavigate();
     const location = useLocation();
     const [mode, setMode] = useState('login'); // 'login' or 'signup'
-    const [role, setRole] = useState('student'); // 'student', 'invigilator', 'admin'
+    const [role, setRole] = useState('admin'); // 'admin', 'coordinator'
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
 
@@ -22,18 +22,17 @@ const Auth = () => {
         email: '',
         password: '',
         name: '',
-        idNumber: '', // Matric Number or Staff Key
-        department: 'Software Engineering', // Default
-        level: '100', // Default
+        idNumber: '', // Staff Key
+        department: '', // Default empty to force selection
     });
 
     useEffect(() => {
-        // Parse Role from URL query if present (useful for Landing Page links)
+        // Parse Role from URL query if present
         const searchParams = new URLSearchParams(location.search);
         const roleParam = searchParams.get('role');
-        if (roleParam && ['student', 'invigilator', 'admin'].includes(roleParam)) {
+        if (roleParam && ['admin', 'coordinator'].includes(roleParam)) {
             setRole(roleParam);
-            setMode('signup'); // If role is passed, assume signup intent
+            setMode('signup');
         }
     }, [location]);
 
@@ -52,7 +51,6 @@ const Auth = () => {
             const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
             const user = userCredential.user;
 
-            // Fetch User Data from Firestore to verify role
             const docRef = doc(db, 'users', user.uid);
             const docSnap = await getDoc(docRef);
 
@@ -61,13 +59,12 @@ const Auth = () => {
                 const userRole = userData.role;
 
                 if (userRole === 'admin') navigate('/admin');
-                else if (userRole === 'invigilator') navigate('/invigilator');
-                else if (userRole === 'student') navigate('/student');
+                else if (userRole === 'coordinator') navigate('/coordinator');
                 else {
-                    setError("Unknown user role.");
+                    setError("Unauthorized role. Please contact support.");
                 }
             } else {
-                setError("User profile not found in database.");
+                setError("User profile not found.");
             }
         } catch (err) {
             console.error("Login Error:", err);
@@ -84,12 +81,12 @@ const Auth = () => {
 
         // Security Check: Validate Staff Keys
         if (role === 'admin' && formData.idNumber !== 'ADMIN2026') {
-            setError("Invalid Admin Staff Key. Access Denied.");
+            setError("Invalid Admin Staff Key.");
             setIsLoading(false);
             return;
         }
-        if (role === 'invigilator' && formData.idNumber !== 'INVIGILATOR2026') {
-            setError("Invalid Invigilator Staff Key. Access Denied.");
+        if (role === 'coordinator' && formData.idNumber !== 'COORD2026') {
+            setError("Invalid Coordinator Staff Key.");
             setIsLoading(false);
             return;
         }
@@ -105,23 +102,16 @@ const Auth = () => {
                 name: formData.name,
                 role: role,
                 department: formData.department,
-                createdAt: new Date().toISOString()
+                createdAt: new Date().toISOString(),
+                staffId: formData.idNumber
             };
-
-            if (role === 'student') {
-                userData.idNumber = formData.idNumber;
-                userData.level = formData.level;
-            } else {
-                userData.staffId = formData.idNumber; // Key used for verification
-            }
 
             // Save to Firestore
             await setDoc(doc(db, 'users', user.uid), userData);
 
             // Redirect
             if (role === 'admin') navigate('/admin');
-            else if (role === 'invigilator') navigate('/invigilator');
-            else navigate('/student');
+            else navigate('/coordinator');
 
         } catch (err) {
             console.error("Signup Error:", err);
@@ -132,15 +122,13 @@ const Auth = () => {
     };
 
     const roleColors = {
-        student: 'bg-primary',
-        invigilator: 'bg-green-600',
-        admin: 'bg-slate-800'
+        admin: 'bg-slate-900',
+        coordinator: 'bg-indigo-600'
     };
 
     const roleText = {
-        student: 'text-primary',
-        invigilator: 'text-green-600',
-        admin: 'text-slate-800'
+        admin: 'text-slate-900',
+        coordinator: 'text-indigo-600'
     };
 
     // Generic display for Login
@@ -152,8 +140,7 @@ const Auth = () => {
 
             {/* Background Decorations */}
             <div className="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-white to-slate-50 z-0"></div>
-            <div className="absolute top-[-100px] right-[-100px] w-[500px] h-[500px] bg-blue-100/40 rounded-full blur-[100px]"></div>
-            <div className="absolute bottom-[-100px] left-[-100px] w-[500px] h-[500px] bg-green-100/40 rounded-full blur-[100px]"></div>
+            <div className="absolute top-[-100px] right-[-100px] w-[500px] h-[500px] bg-indigo-100/30 rounded-full blur-[100px]"></div>
 
             <Button variant="ghost" className="absolute top-6 left-6 z-10 text-slate-500 hover:text-slate-900" onClick={() => navigate('/')}>
                 <ArrowLeft className="mr-2 h-4 w-4" /> Back to Home
@@ -165,28 +152,29 @@ const Auth = () => {
                 className="w-full max-w-md z-10"
             >
                 <div className="text-center mb-8">
-                    <img src="/logo.png" alt="Logo" className="w-16 h-16 mx-auto mb-4 object-contain" />
+                    <div className="w-16 h-16 mx-auto mb-4 bg-white rounded-2xl shadow-lg flex items-center justify-center">
+                        <img src="/logo.png" alt="FA" className="w-10 h-10 object-contain" />
+                    </div>
                     <h1 className="text-3xl font-bold text-slate-900 tracking-tight">FacultyAide</h1>
-                    <p className="text-slate-500 mt-2">Manage your academic activities seamlessly.</p>
+                    <p className="text-slate-500 mt-2">Administrative & Scheduling System</p>
                 </div>
 
                 <Card className="border-0 shadow-2xl overflow-hidden backdrop-blur-sm bg-white/90">
                     <CardHeader className="pb-0 pt-6 px-6">
                         <div className="flex justify-between items-center mb-4">
                             <div>
-                                <CardTitle className="text-2xl font-bold capitalize">{mode === 'login' ? 'Welcome Back' : 'Create Account'}</CardTitle>
+                                <CardTitle className="text-2xl font-bold capitalize">{mode === 'login' ? 'Staff Login' : 'New Staff Account'}</CardTitle>
                                 <CardDescription>
                                     {mode === 'login'
-                                        ? 'Sign in to access your dashboard'
-                                        : `Join as a ${role}`}
+                                        ? 'Sign in to access the portal'
+                                        : `Register as ${role === 'admin' ? 'an Administrator' : 'a Coordinator'}`}
                                 </CardDescription>
                             </div>
                             <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white ${currentTheme} shadow-lg transition-colors duration-300`}>
                                 {mode === 'login' ? <Lock size={20} /> : (
                                     <>
-                                        {role === 'student' && <User size={20} />}
-                                        {role === 'invigilator' && <Shield size={20} />}
                                         {role === 'admin' && <Lock size={20} />}
+                                        {role === 'coordinator' && <CalendarClock size={20} />}
                                     </>
                                 )}
                             </div>
@@ -216,7 +204,7 @@ const Auth = () => {
                                         <div className="space-y-2">
                                             <label className="text-xs font-bold text-slate-500 uppercase">Select Role</label>
                                             <div className="flex bg-slate-100 p-1 rounded-lg">
-                                                {['student', 'invigilator', 'admin'].map((r) => (
+                                                {['admin', 'coordinator'].map((r) => (
                                                     <button
                                                         key={r}
                                                         type="button"
@@ -231,76 +219,50 @@ const Auth = () => {
                                         </div>
 
                                         <div className="space-y-2">
-                                            <label className="text-xs font-bold text-slate-500 uppercase">Full Name</label>
-                                            <div className="relative">
-                                                <User className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                                                <Input
-                                                    className="pl-10"
-                                                    name="name"
-                                                    placeholder="e.g. John Doe"
-                                                    value={formData.name}
-                                                    onChange={handleInputChange}
-                                                    required
-                                                />
-                                            </div>
+                                            <label className="text-xs font-bold text-slate-500 uppercase">Staff Name</label>
+                                            <Input
+                                                name="name"
+                                                placeholder="e.g. Dr. John Doe"
+                                                value={formData.name}
+                                                onChange={handleInputChange}
+                                                required
+                                            />
                                         </div>
 
+                                        {role === 'coordinator' && (
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-bold text-slate-500 uppercase">Department</label>
+                                                <select
+                                                    name="department"
+                                                    className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                                    value={formData.department}
+                                                    onChange={handleInputChange}
+                                                    required
+                                                >
+                                                    <option value="" disabled>Select Department</option>
+                                                    <option value="Software Engineering">Software Engineering</option>
+                                                    <option value="Computer Science">Computer Science</option>
+                                                    <option value="Information Technology">Information Technology</option>
+                                                    <option value="Cyber Security">Cyber Security</option>
+                                                    <option value="Data Science">Data Science</option>
+                                                </select>
+                                            </div>
+                                        )}
+
                                         <div className="space-y-2">
-                                            <label className="text-xs font-bold text-slate-500 uppercase">
-                                                {role === 'student' ? 'ID Number' : 'Staff Key'}
-                                            </label>
+                                            <label className="text-xs font-bold text-slate-500 uppercase">Verification Key</label>
                                             <div className="relative">
                                                 <CreditCard className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
                                                 <Input
                                                     className="pl-10"
                                                     name="idNumber"
-                                                    placeholder={role === 'student' ? "e.g. 020..." : "Enter Verification Key"}
+                                                    placeholder="Enter Staff Key"
                                                     value={formData.idNumber}
                                                     onChange={handleInputChange}
                                                     required
                                                 />
                                             </div>
                                         </div>
-
-                                        <div className="space-y-2">
-                                            <label className="text-xs font-bold text-slate-500 uppercase">Department</label>
-                                            <div className="relative">
-                                                <School className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                                                <select
-                                                    className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 pl-10 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                                                    name="department"
-                                                    value={formData.department}
-                                                    onChange={handleInputChange}
-                                                >
-                                                    <option>Software Engineering</option>
-                                                    <option>Cyber Security</option>
-                                                    <option>Computer Science</option>
-                                                    <option>Information Technology</option>
-                                                    <option>Information Systems</option>
-                                                    <option>Data Science</option>
-                                                </select>
-                                            </div>
-                                        </div>
-
-                                        {role === 'student' && (
-                                            <div className="space-y-2">
-                                                <label className="text-xs font-bold text-slate-500 uppercase">Level</label>
-                                                <div className="relative">
-                                                    <School className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                                                    <select
-                                                        className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 pl-10 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                                                        name="level"
-                                                        value={formData.level}
-                                                        onChange={handleInputChange}
-                                                    >
-                                                        <option>100</option>
-                                                        <option>200</option>
-                                                        <option>300</option>
-                                                        <option>400</option>
-                                                    </select>
-                                                </div>
-                                            </div>
-                                        )}
                                     </motion.div>
                                 )}
                             </AnimatePresence>
@@ -316,7 +278,7 @@ const Auth = () => {
                                         className="pl-10"
                                         type="email"
                                         name="email"
-                                        placeholder="your@uni.edu"
+                                        placeholder="staff@university.edu"
                                         value={formData.email}
                                         onChange={handleInputChange}
                                         required
@@ -360,12 +322,12 @@ const Auth = () => {
 
                     <CardFooter className="bg-slate-50 border-t p-4 flex justify-center">
                         <p className="text-sm text-slate-600">
-                            {mode === 'login' ? "Don't have an account? " : "Already have an account? "}
+                            {mode === 'login' ? "New staff member? " : "Already registered? "}
                             <button
                                 onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(null); }}
                                 className={`font-bold ${currentTextTheme} hover:underline focus:outline-none`}
                             >
-                                {mode === 'login' ? 'Sign Up' : 'Log In'}
+                                {mode === 'login' ? 'Register' : 'Log In'}
                             </button>
                         </p>
                     </CardFooter>
