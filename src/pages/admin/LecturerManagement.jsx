@@ -179,14 +179,19 @@ const LecturerManagement = () => {
 
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex flex-col md:flex-row justify-between gap-4">
-                    <div className="relative flex-1">
-                        <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                        <input
-                            className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                            placeholder="Search by name, email, or department..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
+                    <div className="flex-1 flex gap-2 w-full">
+                        <div className="relative flex-1">
+                            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                            <input
+                                className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                placeholder="Search by name, email, or department..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                        </div>
+                        <Button className="bg-slate-800 text-white px-4 h-10 shadow-sm">
+                            <Search size={16} className="mr-2" /> Search
+                        </Button>
                     </div>
                 </div>
 
@@ -210,7 +215,6 @@ const LecturerManagement = () => {
                                             </div>
                                             <div>
                                                 <div className="font-bold text-slate-900">{l.title} {l.name}</div>
-                                                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter italic">Primary Faculty</div>
                                             </div>
                                         </div>
                                     </td>

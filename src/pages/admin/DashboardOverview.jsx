@@ -53,7 +53,7 @@ const DashboardOverview = () => {
     return (
         <div className="space-y-8 animate-in fade-in duration-700">
             {/* Hero Section */}
-            <div className="relative overflow-hidden bg-slate-900 rounded-3xl p-8 md:p-12 text-white shadow-2xl">
+            <div className="relative overflow-hidden bg-slate-900 rounded-3xl p-6 md:p-12 text-white shadow-2xl">
                 <div className="absolute top-0 right-0 w-1/3 h-full bg-gradient-to-l from-indigo-500/20 to-transparent pointer-events-none" />
                 <div className="relative z-10 max-w-2xl">
                     <div className="flex items-center gap-2 mb-4">

@@ -12,6 +12,8 @@ const ConstraintSettings = () => {
     const [constraints, setConstraints] = useState([]);
     const [lecturers, setLecturers] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(null);
 
     const [newConstraint, setNewConstraint] = useState({
         lecturer: '',
@@ -44,7 +46,9 @@ const ConstraintSettings = () => {
 
     const handleAdd = async () => {
         if (!newConstraint.lecturer) return alert("Select a lecturer.");
+        if (isSaving) return;
 
+        setIsSaving(true);
         try {
             await addDoc(collection(db, 'constraints'), {
                 ...newConstraint,
@@ -52,13 +56,27 @@ const ConstraintSettings = () => {
                 createdAt: new Date().toISOString()
             });
             setNewConstraint({ ...newConstraint, lecturer: '' });
+            alert("Constraint saved successfully.");
         } catch (error) {
             console.error("Error adding constraint:", error);
+            alert("Failed to save constraint.");
+        } finally {
+            setIsSaving(false);
         }
     };
 
     const handleDelete = async (id) => {
-        await deleteDoc(doc(db, 'constraints', id));
+        if (window.confirm("Delete this constraint?")) {
+            setIsDeleting(id);
+            try {
+                await deleteDoc(doc(db, 'constraints', id));
+            } catch (error) {
+                console.error("Error deleting constraint:", error);
+                alert("Failed to delete constraint.");
+            } finally {
+                setIsDeleting(null);
+            }
+        }
     };
 
     return (
@@ -123,8 +141,17 @@ const ConstraintSettings = () => {
                             </select>
                         </div>
 
-                        <Button className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold mt-2" onClick={handleAdd}>
-                            <Save size={16} className="mr-2" /> Save Constraint
+                        <Button
+                            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold mt-2 disabled:opacity-70"
+                            onClick={handleAdd}
+                            disabled={isSaving}
+                        >
+                            {isSaving ? (
+                                <RefreshCw size={16} className="mr-2 animate-spin" />
+                            ) : (
+                                <Save size={16} className="mr-2" />
+                            )}
+                            {isSaving ? 'Saving...' : 'Save Constraint'}
                         </Button>
                     </CardContent>
                 </Card>
@@ -163,8 +190,13 @@ const ConstraintSettings = () => {
                                             size="icon"
                                             className="text-slate-300 hover:text-red-500"
                                             onClick={() => handleDelete(c.id)}
+                                            disabled={isDeleting === c.id}
                                         >
-                                            <Trash2 size={16} />
+                                            {isDeleting === c.id ? (
+                                                <RefreshCw size={16} className="animate-spin text-red-500" />
+                                            ) : (
+                                                <Trash2 size={16} />
+                                            )}
                                         </Button>
                                     </div>
                                 ))}

@@ -12,6 +12,7 @@ const DashboardOverview = () => {
     const { userData } = useOutletContext();
     const [selectedLevel, setSelectedLevel] = useState('100');
     const [activeTimetable, setActiveTimetable] = useState(null);
+    const [activeExamTimetable, setActiveExamTimetable] = useState(null);
     const [loading, setLoading] = useState(true);
 
     const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
@@ -27,7 +28,6 @@ const DashboardOverview = () => {
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
             if (!snapshot.empty) {
-                // Get the most recent active one if multiple exist (though ideally only one)
                 const doc = snapshot.docs[0];
                 setActiveTimetable({ id: doc.id, ...doc.data() });
             } else {
@@ -36,7 +36,22 @@ const DashboardOverview = () => {
             setLoading(false);
         });
 
-        return () => unsubscribe();
+        const qExam = query(
+            collection(db, 'exam_timetables'),
+            where('department', '==', userData.department),
+            where('isActive', '==', true)
+        );
+
+        const unsubscribeExam = onSnapshot(qExam, (snapshot) => {
+            if (!snapshot.empty) {
+                const doc = snapshot.docs[0];
+                setActiveExamTimetable({ id: doc.id, ...doc.data() });
+            } else {
+                setActiveExamTimetable(null);
+            }
+        });
+
+        return () => { unsubscribe(); unsubscribeExam(); };
     }, [userData]);
 
     const formatTime = (h) => {
@@ -128,8 +143,8 @@ const DashboardOverview = () => {
                             <p>Loading active timetable...</p>
                         </div>
                     ) : activeTimetable ? (
-                        <div className="overflow-x-auto">
-                            <table className="w-full border-collapse">
+                        <div className="overflow-x-auto max-w-full">
+                            <table className="w-full border-collapse min-w-[700px]">
                                 <thead className="bg-slate-100 border-b border-slate-200">
                                     <tr>
                                         <th className="p-3 text-[10px] font-black text-red-600 uppercase tracking-wider text-center w-24">Code</th>
@@ -169,7 +184,7 @@ const DashboardOverview = () => {
                                                                 {slot.assignedVenue?.name}
                                                             </div>
                                                         </td>
-                                                        <td className="p-3 text-xs font-medium text-slate-600">{slot.lecturer || 'Staff'}</td>
+                                                        <td className="p-3 text-xs font-medium text-slate-600">{slot.lecturer || 'TBA'}</td>
                                                     </tr>
                                                 ))}
                                             </React.Fragment>
@@ -204,6 +219,66 @@ const DashboardOverview = () => {
                     )}
                 </CardContent>
             </Card>
+
+            {/* Exam Timetable Display */}
+            {activeExamTimetable && (
+                <Card className="border-indigo-200 shadow-md overflow-hidden bg-indigo-50/20">
+                    <CardHeader className="bg-indigo-50/80 border-b border-indigo-100 py-3 md:py-4">
+                        <div className="flex items-center justify-between">
+                            <CardTitle className="text-base md:text-lg font-bold text-indigo-900 flex items-center gap-2">
+                                <Calendar className="text-indigo-600" size={16} />
+                                {selectedLevel} Level Exam Schedule - {activeExamTimetable.semester} Sem
+                            </CardTitle>
+                            <span className="text-[10px] md:text-xs font-bold bg-indigo-600 text-white px-3 py-1 rounded-full uppercase tracking-tighter shadow-sm">
+                                Upcoming Exams
+                            </span>
+                        </div>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                        <div className="overflow-x-auto max-w-full">
+                            <table className="w-full border-collapse min-w-[700px]">
+                                <thead className="bg-indigo-100/50 border-b border-indigo-100">
+                                    <tr>
+                                        <th className="p-3 text-[10px] font-black text-indigo-800 uppercase tracking-wider text-center">Date</th>
+                                        <th className="p-3 text-[10px] font-black text-indigo-800 uppercase tracking-wider text-left">Course</th>
+                                        <th className="p-3 text-[10px] font-black text-indigo-800 uppercase tracking-wider text-center">Time & Duration</th>
+                                        <th className="p-3 text-[10px] font-black text-indigo-800 uppercase tracking-wider text-center">Venue</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-indigo-50 border-b border-indigo-100">
+                                    {activeExamTimetable.schedule?.filter(s => s.level.toString() === selectedLevel).sort((a,b)=> new Date(a.date) - new Date(b.date)).map((exam, idx) => (
+                                        <tr key={idx} className="hover:bg-white transition-colors">
+                                            <td className="p-3 text-xs font-black text-indigo-900 text-center whitespace-nowrap">
+                                                {new Date(exam.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                                            </td>
+                                            <td className="p-3 text-xs font-bold text-slate-700">
+                                                <div className="text-indigo-900">{exam.courseCode}</div>
+                                                <div className="text-[10px] text-slate-500 font-medium">{exam.courseTitle}</div>
+                                            </td>
+                                            <td className="p-3 text-xs font-bold text-slate-700 text-center">
+                                                <div>{exam.startTime}</div>
+                                                <div className="text-[9px] text-slate-400">({exam.durationMins} mins)</div>
+                                            </td>
+                                            <td className="p-3 text-xs font-bold text-indigo-600 text-center">
+                                                <div className="bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 inline-block">
+                                                    {exam.venueName}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {activeExamTimetable.schedule?.filter(s => s.level.toString() === selectedLevel).length === 0 && (
+                                        <tr>
+                                            <td colSpan="4" className="p-8 text-center text-indigo-400 font-medium">
+                                                No exams scheduled for {selectedLevel} Level.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
 
             {/* 4. Quick Actions / Status */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

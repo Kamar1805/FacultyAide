@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
-import { Plus, Users, BookOpen, Layers, X, Check, Trash2, Clock, Search, Edit2 } from 'lucide-react';
+import { Plus, Users, BookOpen, Layers, X, Check, Trash2, Clock, Search, Edit2, ChevronRight, Filter } from 'lucide-react';
 import InstructionGuide from '../../components/InstructionGuide';
+import ConfirmationDialog from '../../components/ConfirmationDialog';
 import { db } from '../../firebase';
 import { collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, updateDoc } from 'firebase/firestore';
 
@@ -49,24 +50,32 @@ const Courses = () => {
         title: '',
         department: '',
         level: '100',
-        students: '',
-        lecturer: '',
-        duration: '2h',
-        type: 'Theory',
-        isSectioned: false,
-        sectionsCount: 2,
+        semester: 'First',
+        creditUnit: '2',
     });
 
+    // Delete confirmation state
+    const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+    const [courseToDelete, setCourseToDelete] = useState(null);
 
-
+    // Filter and Search State
+    const [searchTerm, setSearchTerm] = useState('');
+    const [selectedDept, setSelectedDept] = useState('All');
+    const [selectedLevel, setSelectedLevel] = useState('All');
+    const [selectedSemester, setSelectedSemester] = useState('All');
 
     // Lecturer Filter State
     const [lecturerSearch, setLecturerSearch] = useState('');
 
-    const filteredLecturers = lecturers.filter(l =>
-        l.name.toLowerCase().includes(lecturerSearch.toLowerCase()) ||
-        l.email.toLowerCase().includes(lecturerSearch.toLowerCase())
-    );
+    // Filter Courses logic
+    const filteredCourses = courses.filter(course => {
+        const matchesSearch = course.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            course.title.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesDept = selectedDept === 'All' || course.department === selectedDept;
+        const matchesLevel = selectedLevel === 'All' || course.level === selectedLevel;
+        const matchesSemester = selectedSemester === 'All' || course.semester === selectedSemester;
+        return matchesSearch && matchesDept && matchesLevel && matchesSemester;
+    });
 
     const handleEditClick = (course) => {
         setNewCourse({
@@ -74,12 +83,8 @@ const Courses = () => {
             title: course.title,
             department: course.department || '',
             level: course.level,
-            students: course.students,
-            lecturer: course.lecturer,
-            duration: course.duration,
-            type: course.type,
-            isSectioned: course.sections > 1,
-            sectionsCount: course.sections > 1 ? course.sections : 2
+            semester: course.semester || 'First',
+            creditUnit: course.creditUnit || '2'
         });
         setLecturerSearch(course.lecturer); // Pre-fill search with current lecturer
         setEditId(course.id);
@@ -96,11 +101,8 @@ const Courses = () => {
                 title: newCourse.title,
                 department: newCourse.department,
                 level: newCourse.level,
-                students: parseInt(newCourse.students) || 0,
-                sections: newCourse.isSectioned ? newCourse.sectionsCount : 1,
-                lecturer: newCourse.lecturer || 'Pending',
-                type: newCourse.type,
-                duration: newCourse.duration,
+                semester: newCourse.semester,
+                creditUnit: newCourse.creditUnit,
                 updatedAt: new Date().toISOString()
             };
 
@@ -117,8 +119,7 @@ const Courses = () => {
 
             setIsAdding(false);
             setNewCourse({
-                code: '', title: '', department: '', level: '100', students: '', lecturer: '',
-                duration: '2h', type: 'Theory', isSectioned: false, sectionsCount: 2
+                code: '', title: '', department: '', level: '100', semester: 'First', creditUnit: '2'
             });
             setLecturerSearch('');
             setIsEditing(false);
@@ -129,14 +130,21 @@ const Courses = () => {
         }
     };
 
-    const handleDeleteCourse = async (id) => {
-        if (window.confirm("Are you sure you want to delete this course?")) {
-            await deleteDoc(doc(db, 'courses', id));
+    const handleDeleteClickModal = (id) => {
+        setCourseToDelete(id);
+        setIsDeleteDialogOpen(true);
+    };
+
+    const confirmDelete = async () => {
+        if (courseToDelete) {
+            await deleteDoc(doc(db, 'courses', courseToDelete));
+            setIsDeleteDialogOpen(false);
+            setCourseToDelete(null);
         }
     };
 
     // Group courses by department for the list view
-    const groupedCourses = courses.reduce((acc, course) => {
+    const groupedCourses = filteredCourses.reduce((acc, course) => {
         const dept = course.department || 'Unassigned';
         if (!acc[dept]) acc[dept] = [];
         acc[dept].push(course);
@@ -145,302 +153,402 @@ const Courses = () => {
 
     const sortedDepts = Object.keys(groupedCourses).sort();
 
+    const topRef = useRef(null);
+    useEffect(() => {
+        if (isAdding) {
+            topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }, [isAdding]);
+
     return (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div ref={topRef} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-20">
             <InstructionGuide
-                title="Curriculum Management"
+                title="Curriculum Overview"
                 steps={[
-                    "Define course parameters including credit load, duration, and type (Theory/Practical).",
-                    "Assign primary lecturers.",
-                    "Manage multi-section courses for large cohorts."
+                    "Define the course catalog with Code, Title, Department, and Level.",
+                    "Set the Semester (First/Second) for each course.",
+                    "Detailed configurations (Lecturer, Venue, Sections) are handled by the Coordinator."
                 ]}
             />
 
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
                 <div>
-                    <h2 className="text-2xl font-bold tracking-tight text-slate-900">Course Management</h2>
-                    <p className="text-slate-500 text-sm">Manage academic curriculum across all departments.</p>
+                    <h2 className="text-3xl font-black tracking-tight text-slate-900 leading-tight">Course Management</h2>
+                    <p className="text-slate-500 font-medium mt-1">Design and structure the academic curriculum.</p>
                 </div>
                 {!isAdding ? (
-                    <Button onClick={() => { setIsAdding(true); setIsEditing(false); setNewCourse({ code: '', title: '', department: '', level: '100', students: '', lecturer: '', duration: '2h', type: 'Theory', isSectioned: false, sectionsCount: 2 }); }} className="bg-slate-900 text-white hover:bg-slate-800 shadow-lg shadow-slate-900/20 w-full sm:w-auto">
-                        <Plus className="mr-2 h-4 w-4" /> Add Course
+                    <Button
+                        onClick={() => { setIsAdding(true); setIsEditing(false); setNewCourse({ code: '', title: '', department: '', level: '100', semester: 'First' }); }}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200 transition-all hover:scale-[1.02] active:scale-95 px-6 font-bold"
+                    >
+                        <Plus className="mr-2 h-5 w-5" /> Add New Course
                     </Button>
                 ) : (
-                    <Button variant="outline" onClick={() => { setIsAdding(false); setIsEditing(false); setEditId(null); }} className="w-full sm:w-auto">
+                    <Button variant="outline" onClick={() => { setIsAdding(false); setIsEditing(false); setEditId(null); }} className="border-slate-200 text-slate-600 hover:bg-slate-50 font-semibold">
                         Cancel
                     </Button>
                 )}
             </div>
 
+            {/* Filter and Search Bar */}
+            <div className="bg-white p-1 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-2 items-center">
+                <div className="relative flex-1 w-full">
+                    <Search className="absolute left-4 top-3.5 h-4 w-4 text-slate-400" />
+                    <input
+                        className="w-full pl-11 pr-4 py-3 bg-transparent text-sm font-medium text-slate-700 placeholder:text-slate-400 focus:outline-none"
+                        placeholder="Search by course code or title..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                </div>
+                <div className="h-8 w-px bg-slate-200 hidden md:block"></div>
+                <div className="flex flex-wrap gap-2 p-2 w-full md:w-auto">
+                    <select
+                        className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer hover:bg-slate-100 transition-colors"
+                        value={selectedDept}
+                        onChange={(e) => setSelectedDept(e.target.value)}
+                    >
+                        <option value="All">All Departments</option>
+                        <option value="General Course">General Course</option>
+                        <option value="Software Engineering">Software Engineering</option>
+                        <option value="Computer Science">Computer Science</option>
+                        <option value="Information Technology">Information Technology</option>
+                        <option value="Cyber Security">Cyber Security</option>
+                        <option value="Data Science">Data Science</option>
+                    </select>
+                    <select
+                        className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer hover:bg-slate-100 transition-colors"
+                        value={selectedLevel}
+                        onChange={(e) => setSelectedLevel(e.target.value)}
+                    >
+                        <option value="All">All Levels</option>
+                        <option value="100">100 Level</option>
+                        <option value="200">200 Level</option>
+                        <option value="300">300 Level</option>
+                        <option value="400">400 Level</option>
+                    </select>
+                    <select
+                        className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer hover:bg-slate-100 transition-colors"
+                        value={selectedSemester}
+                        onChange={(e) => setSelectedSemester(e.target.value)}
+                    >
+                        <option value="All">All Semesters</option>
+                        <option value="First">First Semester</option>
+                        <option value="Second">Second Semester</option>
+                    </select>
+                </div>
+            </div>
+
             {/* Quick Stats Summary */}
             {!isAdding && !loading && courses.length > 0 && (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
                     {sortedDepts.map(dept => (
-                        <div key={dept} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center">
-                            <span className="text-lg font-black text-slate-800">{groupedCourses[dept].length}</span>
-                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter truncate w-full">{dept}</span>
+                        <div key={dept} className="bg-white p-4 rounded-xl border border-slate-100 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] flex flex-col items-start justify-between min-h-[80px] hover:border-indigo-100 hover:shadow-indigo-500/10 transition-all group">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate w-full group-hover:text-indigo-500 transition-colors">{dept}</span>
+                            <span className="text-2xl font-black text-slate-800">{groupedCourses[dept].length}</span>
                         </div>
                     ))}
                 </div>
             )}
 
             {isAdding && (
-                <Card className="border border-indigo-100 bg-white shadow-xl shadow-indigo-100/50 rounded-xl overflow-hidden">
-                    <CardHeader className="flex flex-row items-center justify-between bg-slate-50 border-b border-slate-100 py-4">
-                        <div>
-                            <CardTitle className="text-lg font-bold text-slate-900">
-                                {isEditing ? "Edit Course" : "Add New Course"}
-                            </CardTitle>
-                            <CardDescription>Enter course details for timetable allocation.</CardDescription>
-                        </div>
-                        <Button variant="ghost" size="icon" onClick={() => setIsAdding(false)} className="hover:bg-slate-200 rounded-full"><X size={18} /></Button>
-                    </CardHeader>
-                    <CardContent className="space-y-6 pt-6 p-6">
+                <div className="relative">
+                    <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-indigo-50/50 to-transparent -z-10 rounded-t-2xl"></div>
+                    <Card className="border border-slate-200 bg-white/80 backdrop-blur-xl shadow-2xl shadow-indigo-500/10 rounded-2xl overflow-hidden ring-1 ring-slate-900/5">
+                        <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 py-6 px-8 bg-white/50">
+                            <div>
+                                <CardTitle className="text-xl font-black text-slate-900">
+                                    {isEditing ? "Edit Course Details" : "Add New Course"}
+                                </CardTitle>
+                                <CardDescription className="text-slate-500 mt-1">Enter the core metadata for the course.</CardDescription>
+                            </div>
+                            <Button variant="ghost" size="icon" onClick={() => setIsAdding(false)} className="hover:bg-rose-50 hover:text-rose-600 rounded-full transition-colors"><X size={20} /></Button>
+                        </CardHeader>
+                        <CardContent className="space-y-8 p-8">
 
-                        {/* Row 1: Basic Info */}
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 uppercase">Course Code</label>
-                                <input
-                                    className="flex h-11 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    placeholder="CSC 101"
-                                    value={newCourse.code}
-                                    onChange={(e) => setNewCourse({ ...newCourse, code: e.target.value })}
-                                />
-                            </div>
-                            <div className="md:col-span-1 space-y-2">
-                                <label className="text-xs font-bold text-slate-500 uppercase">Course Title</label>
-                                <input
-                                    className="flex h-11 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    placeholder="Introduction to Computing"
-                                    value={newCourse.title}
-                                    onChange={(e) => setNewCourse({ ...newCourse, title: e.target.value })}
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 uppercase">Department</label>
-                                <select
-                                    className="flex h-11 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold bg-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    value={newCourse.department}
-                                    onChange={(e) => setNewCourse({ ...newCourse, department: e.target.value })}
-                                >
-                                    <option value="" disabled>Select Dept</option>
-                                    <option value="Software Engineering">Software Engineering</option>
-                                    <option value="Computer Science">Computer Science</option>
-                                    <option value="Information Technology">Information Technology</option>
-                                    <option value="Cyber Security">Cyber Security</option>
-                                    <option value="Data Science">Data Science</option>
-                                </select>
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 uppercase">Level</label>
-                                <select
-                                    className="flex h-11 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold bg-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    value={newCourse.level}
-                                    onChange={(e) => setNewCourse({ ...newCourse, level: e.target.value })}
-                                >
-                                    <option value="100">100 Level</option>
-                                    <option value="200">200 Level</option>
-                                    <option value="300">300 Level</option>
-                                    <option value="400">400 Level</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        {/* Row 2: Logistics */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div className="space-y-2 relative">
-                                <label className="text-xs font-bold text-slate-500 uppercase">Primary Lecturer</label>
-                                {/* Searchable Dropdown Implementation */}
-                                <input
-                                    className="flex h-11 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 mb-1"
-                                    placeholder="Type to search lecturers..."
-                                    value={newCourse.lecturer || lecturerSearch}
-                                    onChange={(e) => {
-                                        setLecturerSearch(e.target.value);
-                                        setNewCourse({ ...newCourse, lecturer: e.target.value });
-                                    }}
-                                    list="lecturer-options"
-                                />
-                                <datalist id="lecturer-options">
-                                    {filteredLecturers.map(l => (
-                                        <option key={l.id} value={`${l.title} ${l.name}`}>
-                                            {l.department}
-                                        </option>
-                                    ))}
-                                </datalist>
-                                {newCourse.lecturer && (
-                                    <div className="absolute right-3 top-9 text-green-500">
-                                        <Check size={16} />
+                            {/* Row 1: Basic Info */}
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+                                <div className="space-y-3">
+                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Course Code</label>
+                                    <div className="relative">
+                                        <input
+                                            className="flex h-12 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 text-base font-bold text-slate-800 focus:bg-white focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all placeholder:font-normal placeholder:text-slate-400"
+                                            placeholder="e.g. CSC 101"
+                                            value={newCourse.code}
+                                            onChange={(e) => setNewCourse({ ...newCourse, code: e.target.value })}
+                                        />
                                     </div>
-                                )}
-                            </div>
-
-
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 uppercase">Duration</label>
-                                <select
-                                    className="flex h-11 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium bg-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    value={newCourse.duration}
-                                    onChange={(e) => setNewCourse({ ...newCourse, duration: e.target.value })}
-                                >
-                                    <option value="1h">1 Hour</option>
-                                    <option value="2h">2 Hours</option>
-                                    <option value="3h">3 Hours</option>
-                                </select>
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 uppercase">Type</label>
-                                <div className="flex bg-slate-100 p-1 rounded-lg">
-                                    <button
-                                        className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${newCourse.type === 'Theory' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}
-                                        onClick={() => setNewCourse({ ...newCourse, type: 'Theory' })}
-                                    >Theory</button>
-                                    <button
-                                        className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${newCourse.type === 'Practical' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}
-                                        onClick={() => setNewCourse({ ...newCourse, type: 'Practical' })}
-                                    >Practical</button>
                                 </div>
-                            </div>
-                        </div>
-
-                        {/* Row 3: Sections & Enrollment */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-4 bg-slate-50 rounded-xl border border-slate-100">
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 uppercase">Total Enrollment</label>
-                                <div className="relative">
-                                    <Users className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                                <div className="md:col-span-1 space-y-3">
+                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Course Title</label>
                                     <input
-                                        type="number"
-                                        className="flex h-10 w-full rounded-lg border border-slate-200 pl-9 pr-3 py-2 text-sm font-medium focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white"
-                                        placeholder="0"
-                                        value={newCourse.students}
-                                        onChange={(e) => setNewCourse({ ...newCourse, students: e.target.value })}
+                                        className="flex h-12 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 text-sm font-semibold text-slate-700 focus:bg-white focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all placeholder:font-normal placeholder:text-slate-400"
+                                        placeholder="e.g. Intro to Computing"
+                                        value={newCourse.title}
+                                        onChange={(e) => setNewCourse({ ...newCourse, title: e.target.value })}
                                     />
                                 </div>
-                            </div>
-
-                            <div className="md:col-span-2 flex flex-col justify-center space-y-3">
-                                <div className="flex items-center gap-3">
-                                    <input
-                                        type="checkbox"
-                                        id="sectionToggle"
-                                        className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
-                                        checked={newCourse.isSectioned}
-                                        onChange={(e) => setNewCourse({ ...newCourse, isSectioned: e.target.checked })}
-                                    />
-                                    <label htmlFor="sectionToggle" className="font-bold text-slate-700 select-none cursor-pointer">
-                                        Enable Multiple Sections (Cohort Split)
-                                    </label>
-                                </div>
-                                {newCourse.isSectioned && (
-                                    <div className="flex items-center gap-4 animate-in fade-in slide-in-from-top-1 pl-8">
-                                        <span className="text-sm font-medium text-slate-500">Split into:</span>
+                                <div className="space-y-3">
+                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Department</label>
+                                    <div className="relative">
                                         <select
-                                            className="h-9 rounded-md border border-slate-200 px-3 py-1 text-sm font-bold bg-white focus:outline-none"
-                                            value={newCourse.sectionsCount}
-                                            onChange={(e) => setNewCourse({ ...newCourse, sectionsCount: parseInt(e.target.value) })}
+                                            className="flex h-12 w-full appearance-none rounded-xl border border-slate-200 bg-slate-50/50 px-4 text-sm font-semibold text-slate-700 focus:bg-white focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer"
+                                            value={newCourse.department}
+                                            onChange={(e) => setNewCourse({ ...newCourse, department: e.target.value })}
                                         >
-                                            <option value={2}>2 Sections (A, B)</option>
-                                            <option value={3}>3 Sections (A, B, C)</option>
-                                            <option value={4}>4 Sections (A, B, C, D)</option>
+                                            <option value="" disabled>Select Department</option>
+                                            <option value="General Course">General Course</option>
+                                            <option value="Software Engineering">Software Engineering</option>
+                                            <option value="Computer Science">Computer Science</option>
+                                            <option value="Information Technology">Information Technology</option>
+                                            <option value="Cyber Security">Cyber Security</option>
+                                            <option value="Data Science">Data Science</option>
                                         </select>
+                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-500">
+                                            <ChevronRight className="h-4 w-4 rotate-90" />
+                                        </div>
                                     </div>
-                                )}
+                                </div>
+                                <div className="space-y-3">
+                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Level</label>
+                                    <div className="relative">
+                                        <select
+                                            className="flex h-12 w-full appearance-none rounded-xl border border-slate-200 bg-slate-50/50 px-4 text-sm font-semibold text-slate-700 focus:bg-white focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer"
+                                            value={newCourse.level}
+                                            onChange={(e) => setNewCourse({ ...newCourse, level: e.target.value })}
+                                        >
+                                            <option value="100">100 Level</option>
+                                            <option value="200">200 Level</option>
+                                            <option value="300">300 Level</option>
+                                            <option value="400">400 Level</option>
+                                        </select>
+                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-500">
+                                            <ChevronRight className="h-4 w-4 rotate-90" />
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
 
-                        <div className="pt-2">
-                            <Button className={`w-full text-white font-bold h-12 rounded-lg ${isEditing ? 'bg-amber-600 hover:bg-amber-700' : 'bg-indigo-600 hover:bg-indigo-700'}`} onClick={handleAddCourse}>
-                                <Check className="mr-2 h-5 w-5" /> {isEditing ? "Update Course" : "Save Course Configuration"}
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
+                            {/* Row 2: Semester & Credit Unit */}
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+                                <div className="space-y-3 col-span-1 md:col-span-1">
+                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Semester</label>
+                                    <div className="flex bg-slate-100 p-1 rounded-xl h-12">
+                                        <button
+                                            onClick={() => setNewCourse({ ...newCourse, semester: 'First' })}
+                                            className={`flex-1 py-1 text-xs font-bold rounded-lg transition-all ${newCourse.semester === 'First' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                        >
+                                            First
+                                        </button>
+                                        <button
+                                            onClick={() => setNewCourse({ ...newCourse, semester: 'Second' })}
+                                            className={`flex-1 py-1 text-xs font-bold rounded-lg transition-all ${newCourse.semester === 'Second' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                        >
+                                            Second
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="space-y-3 col-span-1 md:col-span-1">
+                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Credit Unit</label>
+                                    <div className="relative">
+                                        <select
+                                            className="flex h-12 w-full appearance-none rounded-xl border border-slate-200 bg-slate-50/50 px-4 text-sm font-semibold text-slate-700 focus:bg-white focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer"
+                                            value={newCourse.creditUnit}
+                                            onChange={(e) => setNewCourse({ ...newCourse, creditUnit: e.target.value })}
+                                        >
+                                            <option value="1">1 Unit</option>
+                                            <option value="2">2 Units</option>
+                                            <option value="3">3 Units</option>
+                                            <option value="4">4 Units</option>
+                                            <option value="6">6 Units</option>
+                                        </select>
+                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-500">
+                                            <ChevronRight className="h-4 w-4 rotate-90" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+
+                            <div className="pt-4 flex justify-end">
+                                <Button className={`px-8 text-white font-bold h-12 rounded-xl shadow-lg transition-transform hover:scale-[1.02] active:scale-95 ${isEditing ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-200' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200'}`} onClick={handleAddCourse}>
+                                    <Check className="mr-2 h-5 w-5" /> {isEditing ? "Update Course" : "Save Course"}
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
             )}
 
             {loading ? (
-                <div className="text-center py-20 bg-white rounded-xl border border-slate-100">
-                    <div className="animate-spin w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full mx-auto mb-4"></div>
-                    <p className="text-slate-500 font-medium">Loading courses...</p>
+                <div className="text-center py-20 bg-white rounded-2xl border border-slate-100 shadow-sm">
+                    <div className="animate-spin w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full mx-auto mb-4"></div>
+                    <p className="text-slate-500 font-medium animate-pulse">Loading existing courses...</p>
                 </div>
             ) : (
-                <div className="space-y-12">
-                    {courses.length === 0 ? (
-                        <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
-                            <p className="text-slate-500 font-medium">No courses added yet.</p>
-                            <p className="text-slate-400 text-sm mt-1">Click "Add Course" to start building the curriculum.</p>
+                <>
+                    {/* Header for Desktop */}
+                    <div className="hidden md:grid grid-cols-12 gap-6 px-4 py-3 bg-slate-100/50 rounded-xl border border-slate-200 text-xs font-black text-slate-400 uppercase tracking-widest mb-4">
+                        <div className="col-span-1 text-center">Level</div>
+                        <div className="col-span-11 grid grid-cols-2 gap-6">
+                            <div>First Semester</div>
+                            <div>Second Semester</div>
                         </div>
-                    ) : (
-                        sortedDepts.map(dept => (
-                            <div key={dept} className="space-y-6">
-                                <div className="flex items-center gap-4">
-                                    <div className="h-px flex-1 bg-slate-200"></div>
-                                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.3em] bg-slate-50 px-4 py-1.5 rounded-full border border-slate-100">
-                                        {dept} <span className="ml-2 text-indigo-500">{groupedCourses[dept].length}</span>
-                                    </h3>
-                                    <div className="h-px flex-1 bg-slate-200"></div>
-                                </div>
-                                <div className="grid gap-4">
-                                    {groupedCourses[dept].map((course) => (
-                                        <Card key={course.id} className="hover:shadow-md transition-all border-slate-200 group">
-                                            <CardContent className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-6">
-                                                <div className="flex items-start gap-5">
-                                                    <div className="bg-slate-50 text-slate-700 px-4 py-3 rounded-xl font-bold text-lg min-w-[5.5rem] text-center border border-slate-200">
-                                                        {course.code}
-                                                    </div>
-                                                    <div>
-                                                        <h3 className="font-bold text-slate-900 text-lg flex items-center gap-2">
-                                                            {course.title}
-                                                            <span className={`text-[10px] uppercase px-2 py-0.5 rounded-full border ${course.type === 'Theory' ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-purple-50 text-purple-700 border-purple-100'}`}>
-                                                                {course.type}
-                                                            </span>
-                                                        </h3>
-                                                        <p className="text-xs text-indigo-600 font-medium">{course.department}</p>
-                                                        <div className="flex flex-wrap items-center gap-y-1 gap-x-4 mt-2">
-                                                            <span className="text-xs text-slate-500 font-medium flex items-center gap-1.5"><Users size={14} className="text-slate-400" /> {course.students} Enrolled</span>
-                                                            <span className="text-xs text-slate-500 font-medium flex items-center gap-1.5"><Clock size={14} className="text-slate-400" /> {course.duration}</span>
-                                                            <span className="text-xs text-slate-500 font-medium flex items-center gap-1.5"><BookOpen size={14} className="text-slate-400" /> {course.lecturer}</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
+                    </div>
 
-                                                <div className="flex items-center gap-6 self-end md:self-center">
-                                                    {course.sections > 1 && (
-                                                        <div className="flex flex-col items-end">
-                                                            <span className="text-2xl font-black text-slate-800">{course.sections}</span>
-                                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sections</span>
+                    <div className="space-y-12">
+                        {courses.length === 0 ? (
+                            <div className="text-center py-24 bg-white/50 rounded-3xl border-2 border-dashed border-slate-200 hover:border-indigo-300 hover:bg-white transition-all group cursor-pointer" onClick={() => setIsAdding(true)}>
+                                <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:bg-indigo-50 group-hover:scale-110 transition-transform">
+                                    <BookOpen className="text-slate-300 group-hover:text-indigo-400" size={32} />
+                                </div>
+                                <p className="text-slate-900 font-bold text-lg">No courses found</p>
+                                <p className="text-slate-500 text-sm mt-1 max-w-sm mx-auto">Get started by defining the academic courses for your faculty.</p>
+                                <Button variant="link" className="text-indigo-600 font-bold mt-2">Add your first course &rarr;</Button>
+                            </div>
+                        ) : (
+                            sortedDepts.map(dept => (
+                                <div key={dept} className="space-y-6">
+                                    <div className="flex items-center gap-4">
+                                        <div className="h-2 w-2 rounded-full bg-slate-900"></div>
+                                        <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">
+                                            {dept}
+                                        </h3>
+                                        <div className="h-px flex-1 bg-slate-200/60"></div>
+                                    </div>
+
+                                    <div className="space-y-4">
+                                        {['100', '200', '300', '400'].map(level => {
+                                            const levelCourses = groupedCourses[dept].filter(c => c.level === level);
+                                            const firstSem = levelCourses.filter(c => !c.semester || c.semester === 'First');
+                                            const secondSem = levelCourses.filter(c => c.semester === 'Second');
+
+                                            if (levelCourses.length === 0) return null;
+
+                                            return (
+                                                <div key={level} className="flex flex-col md:grid md:grid-cols-12 gap-6 p-4 bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+
+                                                    {/* Level Column */}
+                                                    <div className="md:col-span-1 flex md:flex-col items-center justify-center md:justify-start gap-3 md:gap-1">
+                                                        <div className="flex flex-col items-center justify-center bg-indigo-50/50 border border-indigo-100 rounded-lg py-2 w-16 h-16">
+                                                            <span className="text-lg font-black text-indigo-600">{level}</span>
+                                                            <span className="text-[9px] font-bold text-indigo-400 uppercase">Level</span>
                                                         </div>
-                                                    )}
-                                                    <div className="flex items-center gap-2">
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            className="text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                                                            onClick={() => handleEditClick(course)}
-                                                        >
-                                                            <Edit2 size={20} />
-                                                        </Button>
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            className="text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                                            onClick={() => handleDeleteCourse(course.id)}
-                                                        >
-                                                            <Trash2 size={20} />
-                                                        </Button>
+                                                        <div className="md:hidden h-px flex-1 bg-slate-100"></div>
+                                                    </div>
+
+                                                    {/* Semesters Container */}
+                                                    <div className="md:col-span-11 grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+
+                                                        {/* First Semester */}
+                                                        <div className="space-y-3">
+                                                            <div className="flex items-center gap-2 md:hidden">
+                                                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">First Semester</span>
+                                                                <div className="h-px flex-1 bg-slate-100"></div>
+                                                            </div>
+                                                            <div className="grid grid-cols-1 gap-3">
+                                                                {firstSem.map(course => (
+                                                                    <div
+                                                                        key={course.id}
+                                                                        onClick={() => handleEditClick(course)}
+                                                                        className="group relative flex items-start gap-4 bg-white border border-slate-200 rounded-xl p-3 shadow-sm hover:border-indigo-300 hover:shadow-[0_4px_12px_-4px_rgba(79,70,229,0.2)] hover:-translate-y-0.5 transition-all cursor-pointer w-full"
+                                                                    >
+                                                                        <div className="mt-1 min-w-[4px] h-8 rounded-full bg-indigo-500/20 group-hover:bg-indigo-500 transition-colors"></div>
+                                                                        <div className="flex flex-col flex-1 min-w-0">
+                                                                            <div className="flex justify-between items-start gap-2">
+                                                                                <span className="text-sm font-black text-slate-800 tracking-tight">{course.code}</span>
+
+                                                                                <div className="flex items-center gap-1 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                                    {course.creditUnit && (
+                                                                                        <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded mr-1 uppercase">
+                                                                                            {course.creditUnit} U
+                                                                                        </span>
+                                                                                    )}
+                                                                                    <button onClick={(e) => { e.stopPropagation(); handleEditClick(course); }} className="p-1 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 rounded-md transition-colors">
+                                                                                        <Edit2 size={14} />
+                                                                                    </button>
+                                                                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteClickModal(course.id); }} className="p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-md transition-colors">
+                                                                                        <Trash2 size={14} />
+                                                                                    </button>
+                                                                                </div>
+                                                                            </div>
+                                                                            <span className="text-xs text-slate-500 font-medium leading-relaxed mt-0.5 break-words">{course.title}</span>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                                {firstSem.length === 0 && (
+                                                                    <div className="flex items-center justify-center w-full h-16 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+                                                                        <span className="text-xs text-slate-400 font-medium italic">No 1st sem courses</span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Second Semester */}
+                                                        <div className="space-y-3">
+                                                            <div className="flex items-center gap-2 md:hidden">
+                                                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Second Semester</span>
+                                                                <div className="h-px flex-1 bg-slate-100"></div>
+                                                            </div>
+                                                            <div className="grid grid-cols-1 gap-3">
+                                                                {secondSem.map(course => (
+                                                                    <div
+                                                                        key={course.id}
+                                                                        onClick={() => handleEditClick(course)}
+                                                                        className="group relative flex items-start gap-4 bg-white border border-slate-200 rounded-xl p-3 shadow-sm hover:border-indigo-300 hover:shadow-[0_4px_12px_-4px_rgba(79,70,229,0.2)] hover:-translate-y-0.5 transition-all cursor-pointer w-full"
+                                                                    >
+                                                                        <div className="mt-1 min-w-[4px] h-8 rounded-full bg-pink-500/20 group-hover:bg-pink-500 transition-colors"></div>
+                                                                        <div className="flex flex-col flex-1 min-w-0">
+                                                                            <div className="flex justify-between items-start gap-2">
+                                                                                <span className="text-sm font-black text-slate-800 tracking-tight">{course.code}</span>
+
+                                                                                <div className="flex items-center gap-1 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                                    {course.creditUnit && (
+                                                                                        <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded mr-1 uppercase">
+                                                                                            {course.creditUnit} U
+                                                                                        </span>
+                                                                                    )}
+                                                                                    <button onClick={(e) => { e.stopPropagation(); handleEditClick(course); }} className="p-1 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 rounded-md transition-colors">
+                                                                                        <Edit2 size={14} />
+                                                                                    </button>
+                                                                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteClickModal(course.id); }} className="p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-md transition-colors">
+                                                                                        <Trash2 size={14} />
+                                                                                    </button>
+                                                                                </div>
+                                                                            </div>
+                                                                            <span className="text-xs text-slate-500 font-medium leading-relaxed mt-0.5 break-words">{course.title}</span>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                                {secondSem.length === 0 && (
+                                                                    <div className="flex items-center justify-center w-full h-16 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+                                                                        <span className="text-xs text-slate-400 font-medium italic">No 2nd sem courses</span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </CardContent>
-                                        </Card>
-                                    ))}
+                                            );
+                                        })}
+                                    </div>
                                 </div>
-                            </div>
-                        ))
-                    )}
-                </div>
+                            ))
+                        )}
+                    </div>
+                </>
             )}
-        </div>
+
+            <ConfirmationDialog
+                isOpen={isDeleteDialogOpen}
+                title="Delete Course?"
+                description="This action cannot be undone. All data associated with this course will be permanently removed from the system."
+                onConfirm={confirmDelete}
+                onCancel={() => setIsDeleteDialogOpen(false)}
+                confirmText="Delete Course"
+                cancelText="Keep Course"
+            />
+        </div >
     );
 };
 

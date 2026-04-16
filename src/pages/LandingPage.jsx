@@ -115,7 +115,7 @@ const LandingPage = () => {
         <div className="min-h-screen flex flex-col lg:flex-row font-sans bg-white selection:bg-slate-100">
 
             {/* LEFT SIDE: Brand & Info */}
-            <div className="lg:w-[45%] xl:w-[40%] bg-slate-900 text-white p-8 lg:p-12 relative flex flex-col justify-between min-h-[400px] lg:min-h-screen border-r border-slate-800">
+            <div className="lg:w-[45%] xl:w-[40%] bg-primary text-white p-8 lg:p-12 relative flex flex-col justify-between min-h-[400px] lg:min-h-screen border-r border-white/10">
                 <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5 pointer-events-none" />
 
                 {/* Header / Logo Area */}
@@ -140,7 +140,7 @@ const LandingPage = () => {
                     >
                         <h1 className="text-4xl lg:text-5xl font-extrabold leading-tight mb-6 text-white">
                             Academic Resource <br />
-                            <span className="text-slate-400">Management.</span>
+                            <span className="text-white/60">Management.</span>
                         </h1>
                         <p className="text-lg text-slate-300 mb-10 max-w-sm leading-relaxed font-medium">
                             Enterprise scheduling and facility management for modern universities.
@@ -159,12 +159,12 @@ const LandingPage = () => {
                                     transition={{ delay: 0.2 + (idx * 0.1) }}
                                     className="flex items-center gap-4 group"
                                 >
-                                    <div className="bg-slate-800 p-2.5 rounded-lg text-slate-300 group-hover:text-white group-hover:bg-slate-700 transition-colors">
+                                    <div className="bg-white/10 p-2.5 rounded-lg text-white/80 group-hover:text-white group-hover:bg-white/20 transition-colors border border-white/5">
                                         <item.icon size={20} strokeWidth={1.5} />
                                     </div>
                                     <div>
                                         <h3 className="font-semibold text-white text-sm">{item.title}</h3>
-                                        <p className="text-xs text-slate-400">{item.desc}</p>
+                                        <p className="text-xs text-white/50">{item.desc}</p>
                                     </div>
                                 </motion.div>
                             ))}
@@ -177,7 +177,7 @@ const LandingPage = () => {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.5 }}
-                    className="relative z-10 text-xs font-medium text-slate-500 w-full"
+                    className="relative z-10 text-xs font-medium text-white/30 w-full"
                 >
                     <p>© 2026 FacultyAide System v2.0</p>
                 </motion.div>

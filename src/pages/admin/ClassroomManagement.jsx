@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
-import { BadgeCheck, Hammer, Layers, Trash2, Edit2 } from 'lucide-react';
+import { BadgeCheck, Hammer, Layers, Trash2, Edit2, Search, RefreshCcw } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import InstructionGuide from '../../components/InstructionGuide';
 import { db } from '../../firebase';
-import { collection, addDoc, onSnapshot, updateDoc, doc, query, orderBy, deleteDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, updateDoc, doc, query, orderBy, deleteDoc, getDocs } from 'firebase/firestore';
 
 const ClassroomManagement = () => {
     const [venues, setVenues] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isAdding, setIsAdding] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
 
     // Edit State
     const [isEditing, setIsEditing] = useState(false);
@@ -30,7 +31,7 @@ const ClassroomManagement = () => {
         return () => unsubscribe();
     }, []);
 
-    const [newVenue, setNewVenue] = useState({ name: '', capacity: '', type: 'Hall', dept: 'General', maintenance: false });
+    const [newVenue, setNewVenue] = useState({ name: '', capacity: '', type: 'Hall', dept: 'General', block: 'Congo', maintenance: false });
 
     // Populate form for editing
     const handleEditClick = (venue) => {
@@ -39,6 +40,7 @@ const ClassroomManagement = () => {
             capacity: venue.capacity,
             type: venue.type,
             dept: venue.dept,
+            block: venue.block || 'Congo',
             maintenance: venue.status === 'maintenance'
         });
         setEditId(venue.id);
@@ -57,6 +59,7 @@ const ClassroomManagement = () => {
                     capacity: parseInt(newVenue.capacity),
                     type: newVenue.type,
                     dept: newVenue.dept,
+                    block: newVenue.block,
                     status: newVenue.maintenance ? 'maintenance' : 'available',
                     updatedAt: new Date().toISOString()
                 });
@@ -68,13 +71,14 @@ const ClassroomManagement = () => {
                     capacity: parseInt(newVenue.capacity),
                     type: newVenue.type,
                     dept: newVenue.dept,
+                    block: newVenue.block,
                     status: newVenue.maintenance ? 'maintenance' : 'available',
                     createdAt: new Date().toISOString()
                 });
             }
 
             // Reset Form and State
-            setNewVenue({ name: '', capacity: '', type: 'Hall', dept: 'General', maintenance: false });
+            setNewVenue({ name: '', capacity: '', type: 'Hall', dept: 'General', block: 'Congo', maintenance: false });
             setIsAdding(false);
             setIsEditing(false);
             setEditId(null);
@@ -105,6 +109,70 @@ const ClassroomManagement = () => {
         }
     };
 
+    const seedVenues = async () => {
+        if (!window.confirm("WARNING: This will DELETE ALL current venues and reset them to the official FacultyAide Standard List. Are you sure?")) {
+            return;
+        }
+
+        setLoading(true);
+        try {
+            // 1. Delete all existing venues
+            const q = query(collection(db, 'venues'));
+            const snapshot = await getDocs(q);
+            const deletePromises = snapshot.docs.map(doc => deleteDoc(doc.ref));
+            await Promise.all(deletePromises);
+
+            // 2. Define Standard Venues
+            const standardVenues = [
+                // Ground Floor
+                { name: 'CONGO E020 hall', capacity: 150, type: 'Hall', dept: 'Software Engineering', block: 'Congo' },
+                { name: 'CONGO E026 theatre', capacity: 300, type: 'Hall', dept: 'General', block: 'Congo' }, // Shared/General
+                { name: 'CONGO E027 theatre', capacity: 300, type: 'Hall', dept: 'General', block: 'Congo' },
+                { name: 'CONGO E037 hall', capacity: 100, type: 'Hall', dept: 'Computer Science', block: 'Congo' }, // Shared CS/Cyber
+
+                // First Floor - Right Wing (Software & IT)
+                { name: 'CONGO HALL E125', capacity: 60, type: 'Hall', dept: 'Software Engineering', block: 'Congo' },
+                { name: 'CONGO HALL E101', capacity: 60, type: 'Hall', dept: 'Information Technology', block: 'Congo' },
+                { name: 'CONGO HALL E102', capacity: 60, type: 'Hall', dept: 'Information Technology', block: 'Congo' },
+
+                // First Floor - Left Wing (CS & Cyber)
+                { name: 'CONGO HALL E127', capacity: 60, type: 'Hall', dept: 'Computer Science', block: 'Congo' },
+                { name: 'CONGO HALL E128', capacity: 60, type: 'Hall', dept: 'Cyber Security', block: 'Congo' },
+                { name: 'CONGO HALL E129', capacity: 60, type: 'Hall', dept: 'Cyber Security', block: 'Congo' },
+
+                // External / Labs
+                { name: 'Ubangi Lab 1', capacity: 50, type: 'Lab', dept: 'General', block: 'Ubangi' },
+                { name: 'Ubangi Lab 2', capacity: 50, type: 'Lab', dept: 'General', block: 'Ubangi' },
+                { name: 'Physics Lab', capacity: 40, type: 'Lab', dept: 'General', block: 'Physics' },
+
+                // Limpopo (FCOM General)
+                { name: 'Limpopo D006', capacity: 500, type: 'Hall', dept: 'General', block: 'Limpopo' },
+                { name: 'Limpopo D008', capacity: 500, type: 'Hall', dept: 'General', block: 'Limpopo' },
+            ];
+
+            // 3. Insert Venues
+            const addPromises = standardVenues.map(v => addDoc(collection(db, 'venues'), {
+                ...v,
+                status: 'available',
+                createdAt: new Date().toISOString()
+            }));
+            await Promise.all(addPromises);
+
+            alert("Venues have been reset to the Standard FacultyAide List.");
+        } catch (error) {
+            console.error("Error seeding venues:", error);
+            alert("Failed to reset venues.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const filteredVenues = venues.filter(v =>
+        v.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        v.type.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        v.dept.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
     const getStatusColor = (status) => {
         switch (status) {
             case 'available': return 'bg-emerald-100 text-emerald-700 border-emerald-200';
@@ -130,15 +198,37 @@ const ClassroomManagement = () => {
                     <h2 className="text-2xl font-bold tracking-tight text-slate-900">Hall Management</h2>
                     <p className="text-slate-500 text-sm">Configure physical infrastructure and availability.</p>
                 </div>
-                {!isAdding ? (
-                    <Button onClick={() => { setIsAdding(true); setIsEditing(false); setNewVenue({ name: '', capacity: '', type: 'Hall', dept: 'General', maintenance: false }); }} className="bg-slate-900 text-white hover:bg-slate-800 shadow-lg shadow-slate-900/20 w-full sm:w-auto">
-                        + Add New Hall
-                    </Button>
-                ) : (
-                    <Button variant="outline" onClick={() => { setIsAdding(false); setIsEditing(false); setEditId(null); }} className="w-full sm:w-auto">
-                        Cancel Note
-                    </Button>
-                )}
+                <div className="flex gap-2">
+                    {!isAdding && (
+                        <Button variant="destructive" onClick={seedVenues} className="shadow-lg shadow-red-900/10 hidden md:flex">
+                            <RefreshCcw size={16} className="mr-2" /> Reset & Seed Venues
+                        </Button>
+                    )}
+                    {!isAdding ? (
+                        <Button onClick={() => { setIsAdding(true); setIsEditing(false); setNewVenue({ name: '', capacity: '', type: 'Hall', dept: 'General', block: 'Congo', maintenance: false }); }} className="bg-slate-900 text-white hover:bg-slate-800 shadow-lg shadow-slate-900/20 w-full sm:w-auto">
+                            + Add New Hall
+                        </Button>
+                    ) : (
+                        <Button variant="outline" onClick={() => { setIsAdding(false); setIsEditing(false); setEditId(null); }} className="w-full sm:w-auto">
+                            Cancel
+                        </Button>
+                    )}
+                </div>
+            </div>
+
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-center">
+                <div className="relative flex-1 w-full">
+                    <Search size={16} className="absolute left-3 top-3 text-slate-400" />
+                    <input
+                        className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 focus:bg-white transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        placeholder="Search halls by name, type, or department..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                </div>
+                <Button className="bg-slate-800 text-white px-6 h-10 w-full md:w-auto">
+                    <Search size={16} className="mr-2" /> Search
+                </Button>
             </div>
 
             {isAdding && (
@@ -197,6 +287,18 @@ const ClassroomManagement = () => {
                                     <option value="Studio">Studio</option>
                                 </select>
                             </div>
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Building Block</label>
+                                <select
+                                    className="flex h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition-all"
+                                    value={newVenue.block}
+                                    onChange={(e) => setNewVenue({ ...newVenue, block: e.target.value })}
+                                >
+                                    <option value="Congo">Congo Block</option>
+                                    <option value="Limpopo">Limpopo Block</option>
+                                    <option value="General">Other / General</option>
+                                </select>
+                            </div>
                         </div>
 
                         <div className="flex items-center gap-3 p-4 bg-amber-50 rounded-lg border border-amber-100">
@@ -228,7 +330,7 @@ const ClassroomManagement = () => {
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {venues.map((venue) => (
+                    {filteredVenues.map((venue) => (
                         <Card key={venue.id} className={cn(
                             "transition-all duration-300 group hover:shadow-lg border-slate-200 overflow-hidden relative",
                             venue.status === 'maintenance' ? "bg-slate-50/80" : "bg-white"
@@ -255,6 +357,7 @@ const ClassroomManagement = () => {
                                     <CardTitle className="text-lg font-bold text-slate-900">{venue.name}</CardTitle>
                                     <div className="flex items-center gap-2 mt-1">
                                         <span className="text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-600 uppercase tracking-wider">{venue.type}</span>
+                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">{venue.block || 'Congo'}</span>
                                         {venue.dept !== 'General' && (
                                             <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100 truncate max-w-[120px]">
                                                 {venue.dept}
@@ -301,9 +404,9 @@ const ClassroomManagement = () => {
                             </CardContent>
                         </Card>
                     ))}
-                    {venues.length === 0 && (
+                    {filteredVenues.length === 0 && (
                         <div className="col-span-full text-center py-10 bg-white rounded-xl border border-dashed border-slate-300">
-                            <p className="text-slate-500 font-medium">No halls cataloged.</p>
+                            <p className="text-slate-500 font-medium">No halls cataloged or matching your search.</p>
                         </div>
                     )}
                 </div>
