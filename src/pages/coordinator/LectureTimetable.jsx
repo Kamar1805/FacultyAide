@@ -191,20 +191,29 @@ const LectureTimetable = () => {
         setProgress(0);
 
         try {
-            // 1. AI Parsing of NL Constraints
             const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+            const deptNlTexts = storedConstraints
+                .filter((c) => c.kind === 'natural_language' && (c.text || '').trim())
+                .map((c) => c.text.trim());
+
+            const adHocNl = addedConstraints.map((s) => (s || '').trim()).filter(Boolean);
+            const allNlToParse = [...deptNlTexts, ...adHocNl];
+
             let parsedConstraints = [];
 
-            if (addedConstraints.length > 0 && geminiKey) {
+            if (allNlToParse.length > 0 && geminiKey) {
                 setProgress(20);
-                parsedConstraints = await parseAIConstraints(
-                    addedConstraints,
-                    geminiKey,
-                    { courses: selectedCourses, lecturers: fetchedLecturers }
+                parsedConstraints = await parseAIConstraints(allNlToParse, geminiKey, {
+                    courses: selectedCourses,
+                    lecturers: fetchedLecturers,
+                    department: userData?.department || '',
+                });
+            } else if (allNlToParse.length > 0 && !geminiKey) {
+                console.warn('VITE_GEMINI_API_KEY is missing. Skipping natural-language rule parsing.');
+                alert(
+                    'Natural-language rules (saved under Constraints or entered below) need VITE_GEMINI_API_KEY in your .env. Generation will continue without those rules.'
                 );
-            } else if (addedConstraints.length > 0 && !geminiKey) {
-                console.warn("VITE_GEMINI_API_KEY is missing. Skipping AI constraint parsing.");
-                alert("AI Parsing is unavailable (API Key missing), but scheduling will continue with basic rules.");
             }
 
             setProgress(40);
@@ -240,25 +249,55 @@ const LectureTimetable = () => {
                             ...course,
                             id: `${course.id}-S${i}`,
                             code: `${course.code}-S${i}`,
-                            parentCode: course.code, // Keep track of parent
-                            title: `${course.title} (Section ${String.fromCharCode(64 + i)})`, // Section A, B...
+                            parentCode: course.code,
+                            title: `${course.title} (Section ${String.fromCharCode(64 + i)})`,
                             lecturer: specificLecturer,
                             students: currentEnrollment,
-                            sections: 1, // Prevent engine from re-exploding
-                            isSection: true
+                            sections: 1,
+                            isSection: true,
+                            department: course.department,
+                            isCommon: course.isCommon || false,
                         });
                     }
                 } else {
-                    processedCourses.push(course);
+                    processedCourses.push({
+                        ...course,
+                        department: course.department,
+                        isCommon: course.isCommon || false,
+                    });
                 }
             });
 
-            const result = generateSchedule(
-                processedCourses,
-                selectedVenues,
-                [...parsedConstraints, ...storedConstraints], // Combine AI and Manual constraints
-                crossDeptTimetables // Pass other timetables for clash checking
-            );
+            setProgress(75);
+
+            const legacyStructured = storedConstraints
+                .filter((c) => c.kind !== 'natural_language' && c.lecturer && c.day && c.timeSlot)
+                .map((c) => ({
+                    type: 'Exclusion',
+                    lecturer: c.lecturer,
+                    day: c.day,
+                    timeSlot: c.timeSlot,
+                }));
+
+            const mergedConstraints = [...parsedConstraints, ...legacyStructured];
+
+            const response = await fetch('http://localhost:8000/generate_schedule', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    courses: processedCourses,
+                    venues: selectedVenues,
+                    constraints: mergedConstraints,
+                    cross_dept_timetables: crossDeptTimetables
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || 'Backend OR-Tools generation failed');
+            }
+
+            const result = await response.json();
 
             setProgress(90);
             await new Promise(resolve => setTimeout(resolve, 500));
@@ -909,7 +948,7 @@ const LectureTimetable = () => {
                                                 <Sparkles className="text-indigo-500 shrink-0" />
                                                 <input
                                                     className="flex-1 bg-transparent border-b border-indigo-200 focus:border-indigo-500 focus:outline-none text-sm py-2 w-full"
-                                                    placeholder="e.g. 'No lectures on Friday morning' (AI Powered)"
+                                                    placeholder="Optional extra rule for this run only — saved department rules under Constraints also apply."
                                                     value={nlConstraint}
                                                     onChange={(e) => setNlConstraint(e.target.value)}
                                                     onKeyDown={(e) => e.key === 'Enter' && handleAddConstraint()}
@@ -981,9 +1020,13 @@ const LectureTimetable = () => {
                                 </div>
                             </div>
 
-                            {['100', '200', '300', '400'].map(level => {
+                            {['100', '200', '300', '400', 'Other'].map(level => {
                                 const levelSchedule = generatedResult.schedule.filter(item => {
-                                    return item.level.toString() === level;
+                                    const lv = item.level != null ? String(item.level) : '';
+                                    if (level === 'Other') {
+                                        return lv === '' || !['100', '200', '300', '400'].includes(lv);
+                                    }
+                                    return lv === level;
                                 });
 
                                 if (levelSchedule.length === 0) return null;
@@ -991,8 +1034,8 @@ const LectureTimetable = () => {
                                 return (
                                     <div key={level} data-level={level} className="space-y-6">
                                         <div className="flex items-center gap-4">
-                                            <div className="h-10 w-16 bg-slate-900 rounded-xl flex items-center justify-center text-white font-black text-xl shadow-lg shadow-slate-900/20">
-                                                {level}L
+                                            <div className="h-10 min-w-[4rem] px-2 bg-slate-900 rounded-xl flex items-center justify-center text-white font-black text-xl shadow-lg shadow-slate-900/20">
+                                                {level === 'Other' ? 'Other' : `${level}L`}
                                             </div>
                                             <h3 className="text-2xl font-bold text-slate-800 uppercase tracking-tight">Academic Schedule</h3>
                                             <div className="h-px flex-1 bg-slate-200"></div>
@@ -1057,9 +1100,14 @@ const LectureTimetable = () => {
                                                                             </div>
                                                                         </td>
                                                                         <td className="px-8 py-5 font-bold text-slate-500 border-r border-slate-100">
-                                                                            <div className="flex items-center gap-2">
-                                                                                <MapPin size={14} className="text-slate-300" />
-                                                                                {course.assignedVenue?.name}
+                                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                                <MapPin size={14} className="text-slate-300 shrink-0" />
+                                                                                <span>{course.assignedVenue?.name}</span>
+                                                                                {(course.courseType === 'Online' || String(course.assignedVenue?.type || '').toLowerCase() === 'virtual') && (
+                                                                                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-violet-100 text-violet-800 border border-violet-200">
+                                                                                        Online
+                                                                                    </span>
+                                                                                )}
                                                                             </div>
                                                                         </td>
                                                                         <td className="px-8 py-5 font-bold text-slate-500 border-r border-slate-100">

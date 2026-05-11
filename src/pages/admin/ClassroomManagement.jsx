@@ -285,6 +285,7 @@ const ClassroomManagement = () => {
                                     <option value="Hall">Lecture Hall</option>
                                     <option value="Lab">Computer Lab</option>
                                     <option value="Studio">Studio</option>
+                                    <option value="Virtual">Virtual / Online</option>
                                 </select>
                             </div>
                             <div className="space-y-2">

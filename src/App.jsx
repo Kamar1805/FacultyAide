@@ -10,6 +10,7 @@ import DashboardOverview from './pages/admin/DashboardOverview';
 import ClassroomManagement from './pages/admin/ClassroomManagement';
 import Courses from './pages/admin/Courses';
 import LecturerManagement from './pages/admin/LecturerManagement';
+import CoordinatorDirectory from './pages/admin/CoordinatorDirectory';
 
 // Coordinator Pages
 import CoordinatorLayout from './layouts/CoordinatorLayout';
@@ -33,7 +34,7 @@ function App() {
             <Route path="classrooms" element={<ClassroomManagement />} />
             <Route path="lecturers" element={<LecturerManagement />} />
             <Route path="courses" element={<Courses />} />
-            {/* Redirect old routes or handle 404 if needed, for now we just have these */}
+            <Route path="coordinators" element={<CoordinatorDirectory />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Route>
 

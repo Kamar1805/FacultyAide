@@ -4,7 +4,7 @@ import { Calendar, Settings, FileText, LogOut, LayoutGrid, Menu, X, User, BookOp
 import { Button } from '../components/ui/button';
 import { auth, db } from '../firebase';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import FcomBot from '../components/FcomBot';
 
 const CoordinatorLayout = () => {
@@ -29,7 +29,13 @@ const CoordinatorLayout = () => {
                     const docRef = doc(db, 'users', user.uid);
                     const docSnap = await getDoc(docRef);
                     if (docSnap.exists()) {
-                        setUserData(docSnap.data());
+                        const data = docSnap.data();
+                        if (data.role === 'coordinator' && data.accessStatus === 'revoked') {
+                            await signOut(auth);
+                            navigate('/auth?reason=revoked');
+                            return;
+                        }
+                        setUserData({ ...data, uid: user.uid });
                     }
                 } catch (error) {
                     console.error("Error fetching user data:", error);
@@ -40,6 +46,16 @@ const CoordinatorLayout = () => {
         });
         return () => unsubscribe();
     }, [navigate]);
+
+    useEffect(() => {
+        const u = auth.currentUser;
+        if (!u) return;
+        const ref = doc(db, 'users', u.uid);
+        updateDoc(ref, {
+            lastActiveAt: new Date().toISOString(),
+            lastVisitedPath: location.pathname,
+        }).catch(() => {});
+    }, [location.pathname]);
 
     const handleLogout = async () => {
         setIsLoggingOut(true);
@@ -57,7 +73,7 @@ const CoordinatorLayout = () => {
         { path: '/coordinator/courses', icon: BookOpen, label: 'Courses' },
         { path: '/coordinator/lecture-timetable', icon: Calendar, label: 'Lecture Timetable' },
         { path: '/coordinator/exam-timetable', icon: FileText, label: 'Exam Timetable' },
-        { path: '/coordinator/constraints', icon: Settings, label: 'Constraints' },
+        { path: '/coordinator/constraints', icon: Settings, label: 'Dept constraints' },
     ];
 
     return (
@@ -73,18 +89,18 @@ const CoordinatorLayout = () => {
             {/* Sidebar */}
             <aside
                 className={`
-                    bg-primary text-white flex flex-col transition-all duration-300 z-50 h-full fixed lg:relative shadow-2xl lg:shadow-none
+                    bg-gradient-to-b from-[#00008b] to-slate-900 border-r border-[#00008b]/20 text-white flex flex-col transition-all duration-300 z-50 h-full fixed lg:relative shadow-2xl lg:shadow-none
                     ${isSidebarOpen ? 'w-64 translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-20'}
                 `}
             >
                 <div className="h-20 flex items-center justify-between px-4 mt-2 border-b border-white/10 mx-2">
                     {isSidebarOpen ? (
                         <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-primary font-bold shadow-sm">FA</div>
+                            <img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain bg-white rounded-xl p-1 shadow-sm" />
                             <span className="font-bold text-lg tracking-wide whitespace-nowrap">FacultyAide</span>
                         </div>
                     ) : (
-                        <div className="mx-auto w-8 h-8 bg-white rounded-lg flex items-center justify-center text-primary font-bold shadow-sm lg:flex hidden">FA</div>
+                        <div className="mx-auto flex lg:flex hidden"><img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain bg-white rounded-xl p-1 shadow-sm" /></div>
                     )}
                     <button
                         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -113,7 +129,7 @@ const CoordinatorLayout = () => {
                                     flex items-center rounded-xl transition-all group relative
                                     ${isSidebarOpen ? 'px-4 py-3.5' : 'p-3.5 justify-center'}
                                     ${isActive
-                                        ? "bg-white text-primary shadow-lg font-bold transform scale-[0.98]"
+                                        ? "bg-[#579044] text-white shadow-lg shadow-[#579044]/30 font-bold transform scale-[0.98]"
                                         : "text-blue-100 hover:bg-white/10 hover:text-white"
                                     }
                                 `}
@@ -161,17 +177,17 @@ const CoordinatorLayout = () => {
                         </button>
                         <div>
                             <h1 className="text-xl lg:text-2xl font-black text-slate-900 tracking-tight font-display">
-                                Welcome, <span className="text-primary italic">{userData.name || 'Coordinator'}</span> 👋
+                                Welcome, <span className="text-[#00008b] italic">{userData.name || 'Coordinator'}</span> 👋
                             </h1>
                         </div>
                     </div>
 
                     <div className="flex items-center gap-4">
-                        <div className="bg-primary/5 border border-primary/10 rounded-xl px-4 py-2 flex flex-col items-center justify-center shadow-sm backdrop-blur-sm hidden sm:flex">
-                            <span className="text-[10px] uppercase font-black text-primary tracking-[0.2em] leading-none mb-1">Coordinator</span>
+                        <div className="bg-[#00008b]/5 border border-[#00008b]/10 rounded-xl px-4 py-2 flex flex-col items-center justify-center shadow-sm backdrop-blur-sm hidden sm:flex">
+                            <span className="text-[10px] uppercase font-black text-[#579044] tracking-[0.2em] leading-none mb-1">Coordinator</span>
                             <span className="text-xs font-black text-slate-900 leading-none uppercase">{userData.department}</span>
                         </div>
-                        <div className="h-12 w-12 bg-gradient-to-br from-primary to-indigo-600 rounded-xl flex items-center justify-center text-white font-black shadow-lg ring-2 ring-white shrink-0">
+                        <div className="h-12 w-12 bg-gradient-to-br from-[#00008b] to-[#579044] rounded-xl flex items-center justify-center text-white font-black shadow-lg ring-2 ring-white shrink-0">
                             {userData.name ? userData.name.charAt(0) : 'C'}
                         </div>
                     </div>

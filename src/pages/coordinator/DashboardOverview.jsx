@@ -82,7 +82,7 @@ const DashboardOverview = () => {
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
                     <Button variant="outline" onClick={() => navigate('/coordinator/constraints')} className="gap-2 w-full sm:w-auto text-xs md:text-sm h-9 md:h-10">
-                        <Eye size={14} /> Constraints
+                        <Eye size={14} /> Dept constraints
                     </Button>
                     <Button onClick={() => navigate('/coordinator/lecture-timetable')} className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2 shadow-lg shadow-indigo-200 w-full sm:w-auto text-xs md:text-sm h-9 md:h-10">
                         <Edit size={14} /> Management

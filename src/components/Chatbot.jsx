@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, X, Send, Bot } from 'lucide-react';
 import { Button } from './ui/button';
 import { cn } from '../lib/utils';
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const Chatbot = () => {
     const [isOpen, setIsOpen] = useState(false);

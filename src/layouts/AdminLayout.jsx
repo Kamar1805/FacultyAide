@@ -3,15 +3,14 @@ import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import {
     LayoutDashboard,
-    CalendarDays,
     BookOpen,
     Building2,
     Users,
-    Settings,
     LogOut,
     Menu,
     X,
-    RefreshCw
+    RefreshCw,
+    UserSquare2,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { cn } from '../lib/utils';
@@ -50,6 +49,7 @@ const AdminLayout = () => {
         { name: 'Hall Management', icon: Building2, path: '/admin/classrooms' },
         { name: 'Lecturers', icon: Users, path: '/admin/lecturers' },
         { name: 'Course Management', icon: BookOpen, path: '/admin/courses' },
+        { name: 'Coordinators', icon: UserSquare2, path: '/admin/coordinators' },
     ];
 
     return (
@@ -65,7 +65,7 @@ const AdminLayout = () => {
             {/* Sidebar */}
             <aside
                 className={cn(
-                    "bg-primary text-white flex flex-col transition-all duration-300 z-50 h-full fixed md:relative shadow-2xl md:shadow-none",
+                    "bg-gradient-to-b from-[#00008b] to-slate-900 border-r border-[#00008b]/20 text-white flex flex-col transition-all duration-300 z-50 h-full fixed md:relative shadow-2xl md:shadow-none",
                     isSidebarOpen ? "w-64 translate-x-0" : "-translate-x-full md:translate-x-0 md:w-20"
                 )}
             >
@@ -96,7 +96,7 @@ const AdminLayout = () => {
                             className={({ isActive }) => cn(
                                 "flex items-center px-4 py-3.5 rounded-xl transition-all group",
                                 isActive
-                                    ? "bg-white text-primary shadow-lg font-bold transform scale-[0.98]"
+                                    ? "bg-[#579044] text-white shadow-lg shadow-[#579044]/30 font-bold transform scale-[0.98]"
                                     : "text-blue-100 hover:bg-white/10 hover:text-white"
                             )}
                         >
@@ -141,19 +141,19 @@ const AdminLayout = () => {
                         </button>
                         <div>
                             {/* Mobile Title / Greeting */}
-                            <h1 className="text-lg font-bold text-slate-800 md:hidden font-display italic">Fcom Admin</h1>
+                            <h1 className="text-lg font-bold text-slate-800 md:hidden font-display italic">Admin</h1>
                             {/* Desktop Title */}
                             <h1 className="text-xl md:text-2xl font-bold text-slate-900 hidden md:block tracking-tight font-display">
-                                Welcome back, <span className="text-primary italic">Fcom Admin</span> 👋
+                                Welcome back, <span className="text-[#00008b] italic">Admin</span> 👋
                             </h1>
                         </div>
                     </div>
 
                     {/* User Card - Visible on all screens */}
                     <div className="flex items-center">
-                        <div className="bg-primary/5 border border-primary/10 rounded-xl px-4 py-2 flex flex-col items-center justify-center shadow-sm backdrop-blur-sm">
-                            <span className="text-[10px] uppercase font-black text-primary tracking-[0.2em] leading-none mb-1">Administrator</span>
-                            <span className="text-xs font-black text-slate-900 leading-none">FCOM ADMIN</span>
+                        <div className="bg-[#00008b]/5 border border-[#00008b]/10 rounded-xl px-4 py-2 flex flex-col items-center justify-center shadow-sm backdrop-blur-sm">
+                            <span className="text-[10px] uppercase font-black text-[#579044] tracking-[0.2em] leading-none mb-1">Administrator</span>
+                            <span className="text-xs font-black text-slate-900 leading-none">FA ADMIN</span>
                         </div>
                     </div>
                 </header>

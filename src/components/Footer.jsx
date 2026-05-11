@@ -9,7 +9,7 @@ const Footer = () => {
                         <img src="/logo.png" alt="FacultyAide Logo" className="h-10 w-10 object-contain" />
                         <div>
                             <span className="block text-white font-bold text-lg tracking-wide">FacultyAide</span>
-                            <span className="text-xs text-slate-400">Smart Classroom & Seat Allocation</span>
+                            <span className="text-xs text-slate-400">Smart timetabling & venue coordination</span>
                         </div>
                     </div>
 

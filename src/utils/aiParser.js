@@ -1,71 +1,81 @@
+import { geminiGenerateText } from './geminiApi';
+
 /**
  * Parses natural language constraints into structured JSON rules.
- * @param {string[]} constraints - Array of NL strings
+ * @param {string[]} constraintLines - Array of NL strings
  * @param {string} apiKey - Gemini API Key
- * @param {Object} context - { courses: [], lecturers: [] }
+ * @param {Object} context - { courses: [], lecturers: [], department?: string }
  * @returns {Promise<Array>} Structured constraints
  */
-export const parseAIConstraints = async (constraints, apiKey, context = { courses: [], lecturers: [] }) => {
-    if (!apiKey || constraints.length === 0) return [];
+export const parseAIConstraints = async (
+    constraintLines,
+    apiKey,
+    context = { courses: [], lecturers: [], department: '' }
+) => {
+    if (!apiKey || constraintLines.length === 0) return [];
 
-    const lecturerNames = context.lecturers.map(l => `${l.title} ${l.name}`).join(", ");
-    const courseCodes = context.courses.map(c => c.code).join(", ");
+    const lecturerNames = context.lecturers.map((l) => `${l.title} ${l.name}`).join(', ');
+    const courseList = context.courses
+        .map((c) => `${c.code}${c.level ? ` (L${c.level})` : ''}`)
+        .join(', ');
+    const department = context.department || '';
 
     const prompt = `
-        You are a scheduling assistant for Nile University. 
-        Convert the following natural language constraints into a structured JSON array.
-        
-        Department Context:
-        - Registered Lecturers: ${lecturerNames}
-        - Registered Courses: ${courseCodes}
-        
-        Constraints to Parse:
-        ${constraints.join("\n")}
-        
-        Output Format (STRICT JSON ARRAY):
-        [
-          {
-            "lecturer": "Full Name", // Match exactly from Registered Lecturers if mentioned
-            "course": "Course Code", // Match exactly from Registered Courses if mentioned
-            "level": "100|200|300|400", // The level this rule applies to
-            "day": "Monday|Tuesday|Wednesday|Thursday|Friday",
-            "start": 9, // Start hour in 24h (9-17)
-            "end": 12,   // End hour in 24h (9-17)
-            "priority": "high|normal" // "high" if it says "start with", "must be first", etc.
-          }
-        ]
-        
-        Rules:
-        - "Morning" means 9 to 12.
-        - "Afternoon" means 13 to 17.
-        - If a specific hour is mentioned, use it.
-        - If the rule is about a level (e.g., "300 level should start with..."), set "level" to "300".
-        - If the rule is about a specific course starting first, set "priority" to "high" for that course.
-        - Only return the JSON array, no explanation or markdown blocks.
-    `;
+You are a university timetable constraints assistant.
+
+Department scheduling context:
+- Department: ${department || '(not specified)'}
+- Known lecturers (match names exactly when a rule names a person): ${lecturerNames}
+- Known courses this run (match codes like CSC301; section suffixes like CSC301-S1 still map to CSC301): ${courseList}
+
+Convert EACH bullet/rule below into one or more objects in a JSON array. Every object must use this shape:
+
+{
+  "type": "Exclusion",
+  "departmentWide": boolean,
+  "lecturer": string | null,
+  "course": string | null,
+  "level": "100" | "200" | "300" | "400" | null,
+  "day": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | null,
+  "timeSlot": "Morning" | "Afternoon" | "All Day" | null,
+  "start": number | null,
+  "end": number | null
+}
+
+Rules for filling fields:
+- type is always "Exclusion" for things to BLOCK (unavailable, no class, must not run, etc.).
+- departmentWide: true when the rule applies to ALL courses in this scheduling batch (e.g. "no classes Friday afternoon", "department meeting Monday morning"). Omit specific lecturer/course/level when you set departmentWide true unless the text also narrows scope.
+- lecturer: full name as listed above when the rule is about one person's availability; else null.
+- course: course code only (e.g. CSC301) when the rule names one course; else null.
+- level: "200" if the rule says 200-level / 200L / second year only; else null.
+- day: the weekday if specified; else null.
+- timeSlot: use "Morning" for 9am-12pm, "Afternoon" for 1pm-5pm, "All Day" for full teaching day, if those phrases fit; else null.
+- start/end: optional explicit 24-hour integers (9-17) for the forbidden window. If you use start/end, prefer start inclusive and end exclusive (e.g. morning 9-12 → start 9, end 12). Use null if using only timeSlot.
+
+If both timeSlot and start/end apply, prefer start/end for precision.
+
+Natural language rules to parse:
+${constraintLines.map((t, i) => `${i + 1}. ${t}`).join('\n')}
+
+Output ONLY a valid JSON array. No markdown, no commentary.
+`;
 
     try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemma-3-4b-it:generateContent?key=${apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{
-                    parts: [{ text: prompt }]
-                }]
-            })
-        });
-        
-        const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const result = await geminiGenerateText(apiKey, prompt.trim(), null);
+        if (!result.ok) {
+            console.error('AI constraint parsing failed:', result.error);
+            return [];
+        }
+        const text = result.text || '';
 
-        // Clean markdown code blocks if present
-        const jsonMatch = text.match(/\[.*\]/s);
+        const jsonMatch = text.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
-            return JSON.parse(jsonMatch[0]);
+            const parsed = JSON.parse(jsonMatch[0]);
+            return Array.isArray(parsed) ? parsed : [];
         }
         return [];
     } catch (error) {
-        console.error("AI Parsing failed:", error);
+        console.error('AI Parsing failed:', error);
         return [];
     }
 };

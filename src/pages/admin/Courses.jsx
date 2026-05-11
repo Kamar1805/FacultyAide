@@ -7,6 +7,40 @@ import ConfirmationDialog from '../../components/ConfirmationDialog';
 import { db } from '../../firebase';
 import { collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, updateDoc } from 'firebase/firestore';
 
+const CourseCard = ({ course, onEdit, onDelete }) => (
+    <div
+        onClick={() => onEdit(course)}
+        className="group relative flex flex-col justify-between bg-white border border-slate-200/80 hover:border-[#00008b]/30 rounded-2xl p-5 shadow-sm hover:shadow-xl hover:shadow-[#00008b]/5 transition-all cursor-pointer overflow-hidden backdrop-blur-sm"
+    >
+        {/* Subtle Top Gradient Bar */}
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#00008b] to-[#579044] opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+
+        <div className="flex justify-between items-start mb-3">
+            <span className="text-base font-black text-slate-900 uppercase tracking-tight">{course.code}</span>
+            <div className="flex items-center gap-2">
+                {course.creditUnit && (
+                    <span className="px-2.5 py-1 bg-slate-50 text-slate-500 text-[10px] font-black rounded-lg uppercase border border-slate-200/60 transition-colors group-hover:bg-slate-100">
+                        {course.creditUnit} UNIT
+                    </span>
+                )}
+                {/* Actions strictly hidden until hover (except on touch devices) */}
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 md:opacity-0 transition-opacity">
+                    <button onClick={(e) => { e.stopPropagation(); onEdit(course); }} className="p-1.5 text-slate-400 hover:bg-[#00008b]/10 hover:text-[#00008b] rounded-md transition-colors" title="Edit">
+                        <Edit2 size={14} />
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); onDelete(course.id); }} className="p-1.5 text-slate-400 hover:bg-rose-100 hover:text-rose-600 rounded-md transition-colors" title="Delete">
+                        <Trash2 size={14} />
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <h5 className="text-xs font-bold text-slate-500 leading-relaxed pr-6 line-clamp-2 uppercase tracking-wide">
+            {course.title}
+        </h5>
+    </div>
+);
+
 const Courses = () => {
     const [courses, setCourses] = useState([]);
     const [lecturers, setLecturers] = useState([]);
@@ -63,6 +97,14 @@ const Courses = () => {
     const [selectedDept, setSelectedDept] = useState('All');
     const [selectedLevel, setSelectedLevel] = useState('All');
     const [selectedSemester, setSelectedSemester] = useState('All');
+    
+    // Toast Notification State
+    const [toastMessage, setToastMessage] = useState('');
+    
+    const showToast = (msg) => {
+        setToastMessage(msg);
+        setTimeout(() => setToastMessage(''), 3000);
+    };
 
     // Lecturer Filter State
     const [lecturerSearch, setLecturerSearch] = useState('');
@@ -95,6 +137,21 @@ const Courses = () => {
     const handleAddCourse = async () => {
         if (!newCourse.code || !newCourse.title || !newCourse.department) return alert("Please fill in Code, Title, and Department.");
 
+        // Duplicate Check
+        if (!isEditing) {
+            const duplicate = courses.find(c => 
+                (c.code.toLowerCase().trim() === newCourse.code.toLowerCase().trim() ||
+                 c.title.toLowerCase().trim() === newCourse.title.toLowerCase().trim()) &&
+                c.department === newCourse.department
+            );
+
+            if (duplicate) {
+                const semText = duplicate.semester ? duplicate.semester.toUpperCase() + ' SEMESTER' : '';
+                alert(`THIS COURSE IS ALREADY PRESENT IN ${duplicate.department.toUpperCase()} (${duplicate.level} LVL ${semText})... YOU CANNOT ADD THE SAME COURSE TWICE TO THE SAME DEPARTMENT.`);
+                return;
+            }
+        }
+
         try {
             const courseData = {
                 code: newCourse.code,
@@ -115,6 +172,7 @@ const Courses = () => {
                     ...courseData,
                     createdAt: new Date().toISOString()
                 });
+                showToast("New course fully integrated into curriculum!");
             }
 
             setIsAdding(false);
@@ -161,7 +219,15 @@ const Courses = () => {
     }, [isAdding]);
 
     return (
-        <div ref={topRef} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-20">
+        <div ref={topRef} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-20 relative">
+            {/* Toast Notification */}
+            {toastMessage && (
+                <div className="fixed top-6 right-6 bg-emerald-600 text-white px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300 z-[100]">
+                    <Check className="w-5 h-5 text-white" />
+                    <span className="font-bold tracking-wide">{toastMessage}</span>
+                </div>
+            )}
+
             <InstructionGuide
                 title="Curriculum Overview"
                 steps={[
@@ -209,7 +275,6 @@ const Courses = () => {
                         onChange={(e) => setSelectedDept(e.target.value)}
                     >
                         <option value="All">All Departments</option>
-                        <option value="General Course">General Course</option>
                         <option value="Software Engineering">Software Engineering</option>
                         <option value="Computer Science">Computer Science</option>
                         <option value="Information Technology">Information Technology</option>
@@ -297,7 +362,6 @@ const Courses = () => {
                                             onChange={(e) => setNewCourse({ ...newCourse, department: e.target.value })}
                                         >
                                             <option value="" disabled>Select Department</option>
-                                            <option value="General Course">General Course</option>
                                             <option value="Software Engineering">Software Engineering</option>
                                             <option value="Computer Science">Computer Science</option>
                                             <option value="Information Technology">Information Technology</option>
@@ -387,146 +451,98 @@ const Courses = () => {
                 </div>
             ) : (
                 <>
-                    {/* Header for Desktop */}
-                    <div className="hidden md:grid grid-cols-12 gap-6 px-4 py-3 bg-slate-100/50 rounded-xl border border-slate-200 text-xs font-black text-slate-400 uppercase tracking-widest mb-4">
-                        <div className="col-span-1 text-center">Level</div>
-                        <div className="col-span-11 grid grid-cols-2 gap-6">
-                            <div>First Semester</div>
-                            <div>Second Semester</div>
-                        </div>
-                    </div>
-
-                    <div className="space-y-12">
+                    <div className="space-y-16 mt-8">
                         {courses.length === 0 ? (
-                            <div className="text-center py-24 bg-white/50 rounded-3xl border-2 border-dashed border-slate-200 hover:border-indigo-300 hover:bg-white transition-all group cursor-pointer" onClick={() => setIsAdding(true)}>
-                                <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:bg-indigo-50 group-hover:scale-110 transition-transform">
-                                    <BookOpen className="text-slate-300 group-hover:text-indigo-400" size={32} />
+                            <div className="text-center py-24 bg-white/50 rounded-3xl border-2 border-dashed border-slate-200 hover:border-[#00008b]/30 hover:bg-white transition-all group cursor-pointer" onClick={() => setIsAdding(true)}>
+                                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 group-hover:bg-[#00008b]/5 group-hover:scale-110 transition-transform">
+                                    <BookOpen className="text-slate-300 group-hover:text-[#00008b]" size={36} />
                                 </div>
-                                <p className="text-slate-900 font-bold text-lg">No courses found</p>
-                                <p className="text-slate-500 text-sm mt-1 max-w-sm mx-auto">Get started by defining the academic courses for your faculty.</p>
-                                <Button variant="link" className="text-indigo-600 font-bold mt-2">Add your first course &rarr;</Button>
+                                <p className="text-slate-900 font-extrabold text-2xl tracking-tight">No courses found</p>
+                                <p className="text-slate-500 text-base mt-2 max-w-sm mx-auto font-medium">Get started by defining the academic courses for your faculty.</p>
+                                <Button variant="link" className="text-[#579044] font-bold mt-4 text-lg">Add your first course &rarr;</Button>
                             </div>
                         ) : (
                             sortedDepts.map(dept => (
-                                <div key={dept} className="space-y-6">
-                                    <div className="flex items-center gap-4">
-                                        <div className="h-2 w-2 rounded-full bg-slate-900"></div>
-                                        <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">
+                                <div key={dept} className="space-y-10 relative">
+                                    {/* Department Header */}
+                                    <div className="sticky top-0 z-20 flex items-center gap-4 bg-[#f8fafc]/90 backdrop-blur-xl py-5 -mx-4 px-4 border-y border-slate-200/50 shadow-sm">
+                                        <div className="h-10 w-2 rounded-full bg-gradient-to-b from-[#00008b] to-[#579044] shadow-md"></div>
+                                        <h3 className="text-2xl font-black text-slate-900 tracking-tight uppercase">
                                             {dept}
                                         </h3>
-                                        <div className="h-px flex-1 bg-slate-200/60"></div>
                                     </div>
 
-                                    <div className="space-y-4">
+                                    <div className="space-y-12">
                                         {['100', '200', '300', '400'].map(level => {
                                             const levelCourses = groupedCourses[dept].filter(c => c.level === level);
+                                            if (levelCourses.length === 0) return null;
+
                                             const firstSem = levelCourses.filter(c => !c.semester || c.semester === 'First');
                                             const secondSem = levelCourses.filter(c => c.semester === 'Second');
 
-                                            if (levelCourses.length === 0) return null;
-
                                             return (
-                                                <div key={level} className="flex flex-col md:grid md:grid-cols-12 gap-6 p-4 bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-
-                                                    {/* Level Column */}
-                                                    <div className="md:col-span-1 flex md:flex-col items-center justify-center md:justify-start gap-3 md:gap-1">
-                                                        <div className="flex flex-col items-center justify-center bg-indigo-50/50 border border-indigo-100 rounded-lg py-2 w-16 h-16">
-                                                            <span className="text-lg font-black text-indigo-600">{level}</span>
-                                                            <span className="text-[9px] font-bold text-indigo-400 uppercase">Level</span>
-                                                        </div>
-                                                        <div className="md:hidden h-px flex-1 bg-slate-100"></div>
+                                                <div key={level} className="relative pl-0 md:pl-16">
+                                                    {/* Decorative Line & Level indicator (Desktop) */}
+                                                    <div className="absolute left-6 top-0 bottom-0 w-px bg-slate-200/80 hidden md:block"></div>
+                                                    <div className="absolute left-0 top-0 hidden md:flex items-center justify-center w-12 h-12 bg-white border-2 border-[#00008b]/10 rounded-2xl shadow-sm z-10 box-border border-b-4 border-b-[#00008b]/20 text-[#00008b] font-black text-lg">
+                                                        {level}
                                                     </div>
 
-                                                    {/* Semesters Container */}
-                                                    <div className="md:col-span-11 grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+                                                    {/* Mobile Level Indicator */}
+                                                    <div className="md:hidden flex items-center justify-between mb-6 bg-white py-3 px-5 rounded-2xl border-2 border-[#00008b]/10 shadow-sm w-full border-b-4 border-b-[#00008b]/20">
+                                                        <span className="text-[#00008b] font-black text-lg tracking-tight">{level} Level</span>
+                                                        <div className="flex gap-1.5">
+                                                            <span className="w-2 h-2 rounded-full bg-[#00008b]"></span>
+                                                            <span className="w-2 h-2 rounded-full bg-[#579044]"></span>
+                                                        </div>
+                                                    </div>
 
+                                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-10">
+                                                        
                                                         {/* First Semester */}
-                                                        <div className="space-y-3">
-                                                            <div className="flex items-center gap-2 md:hidden">
-                                                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">First Semester</span>
-                                                                <div className="h-px flex-1 bg-slate-100"></div>
-                                                            </div>
-                                                            <div className="grid grid-cols-1 gap-3">
+                                                        <div className="space-y-4">
+                                                            <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-3 mb-4">
+                                                                <div className="h-px w-8 bg-slate-200"></div> First Semester
+                                                            </h4>
+                                                            <div className="grid gap-3">
                                                                 {firstSem.map(course => (
-                                                                    <div
-                                                                        key={course.id}
-                                                                        onClick={() => handleEditClick(course)}
-                                                                        className="group relative flex items-start gap-4 bg-white border border-slate-200 rounded-xl p-3 shadow-sm hover:border-indigo-300 hover:shadow-[0_4px_12px_-4px_rgba(79,70,229,0.2)] hover:-translate-y-0.5 transition-all cursor-pointer w-full"
-                                                                    >
-                                                                        <div className="mt-1 min-w-[4px] h-8 rounded-full bg-indigo-500/20 group-hover:bg-indigo-500 transition-colors"></div>
-                                                                        <div className="flex flex-col flex-1 min-w-0">
-                                                                            <div className="flex justify-between items-start gap-2">
-                                                                                <span className="text-sm font-black text-slate-800 tracking-tight">{course.code}</span>
-
-                                                                                <div className="flex items-center gap-1 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                                    {course.creditUnit && (
-                                                                                        <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded mr-1 uppercase">
-                                                                                            {course.creditUnit} U
-                                                                                        </span>
-                                                                                    )}
-                                                                                    <button onClick={(e) => { e.stopPropagation(); handleEditClick(course); }} className="p-1 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 rounded-md transition-colors">
-                                                                                        <Edit2 size={14} />
-                                                                                    </button>
-                                                                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteClickModal(course.id); }} className="p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-md transition-colors">
-                                                                                        <Trash2 size={14} />
-                                                                                    </button>
-                                                                                </div>
-                                                                            </div>
-                                                                            <span className="text-xs text-slate-500 font-medium leading-relaxed mt-0.5 break-words">{course.title}</span>
-                                                                        </div>
-                                                                    </div>
+                                                                    <CourseCard 
+                                                                        key={course.id} 
+                                                                        course={course} 
+                                                                        onEdit={handleEditClick} 
+                                                                        onDelete={handleDeleteClickModal} 
+                                                                    />
                                                                 ))}
                                                                 {firstSem.length === 0 && (
-                                                                    <div className="flex items-center justify-center w-full h-16 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
-                                                                        <span className="text-xs text-slate-400 font-medium italic">No 1st sem courses</span>
+                                                                    <div className="flex items-center justify-center w-full h-20 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+                                                                        <span className="text-sm text-slate-400 font-medium">No courses defined</span>
                                                                     </div>
                                                                 )}
                                                             </div>
                                                         </div>
 
                                                         {/* Second Semester */}
-                                                        <div className="space-y-3">
-                                                            <div className="flex items-center gap-2 md:hidden">
-                                                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Second Semester</span>
-                                                                <div className="h-px flex-1 bg-slate-100"></div>
-                                                            </div>
-                                                            <div className="grid grid-cols-1 gap-3">
+                                                        <div className="space-y-4">
+                                                            <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-3 mb-4">
+                                                                <div className="h-px w-8 bg-[#579044]/30"></div> Second Semester
+                                                            </h4>
+                                                            <div className="grid gap-3">
                                                                 {secondSem.map(course => (
-                                                                    <div
-                                                                        key={course.id}
-                                                                        onClick={() => handleEditClick(course)}
-                                                                        className="group relative flex items-start gap-4 bg-white border border-slate-200 rounded-xl p-3 shadow-sm hover:border-indigo-300 hover:shadow-[0_4px_12px_-4px_rgba(79,70,229,0.2)] hover:-translate-y-0.5 transition-all cursor-pointer w-full"
-                                                                    >
-                                                                        <div className="mt-1 min-w-[4px] h-8 rounded-full bg-pink-500/20 group-hover:bg-pink-500 transition-colors"></div>
-                                                                        <div className="flex flex-col flex-1 min-w-0">
-                                                                            <div className="flex justify-between items-start gap-2">
-                                                                                <span className="text-sm font-black text-slate-800 tracking-tight">{course.code}</span>
-
-                                                                                <div className="flex items-center gap-1 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                                    {course.creditUnit && (
-                                                                                        <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded mr-1 uppercase">
-                                                                                            {course.creditUnit} U
-                                                                                        </span>
-                                                                                    )}
-                                                                                    <button onClick={(e) => { e.stopPropagation(); handleEditClick(course); }} className="p-1 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 rounded-md transition-colors">
-                                                                                        <Edit2 size={14} />
-                                                                                    </button>
-                                                                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteClickModal(course.id); }} className="p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-md transition-colors">
-                                                                                        <Trash2 size={14} />
-                                                                                    </button>
-                                                                                </div>
-                                                                            </div>
-                                                                            <span className="text-xs text-slate-500 font-medium leading-relaxed mt-0.5 break-words">{course.title}</span>
-                                                                        </div>
-                                                                    </div>
+                                                                    <CourseCard 
+                                                                        key={course.id} 
+                                                                        course={course} 
+                                                                        onEdit={handleEditClick} 
+                                                                        onDelete={handleDeleteClickModal} 
+                                                                    />
                                                                 ))}
                                                                 {secondSem.length === 0 && (
-                                                                    <div className="flex items-center justify-center w-full h-16 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
-                                                                        <span className="text-xs text-slate-400 font-medium italic">No 2nd sem courses</span>
+                                                                    <div className="flex items-center justify-center w-full h-20 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+                                                                        <span className="text-sm text-slate-400 font-medium">No courses defined</span>
                                                                     </div>
                                                                 )}
                                                             </div>
                                                         </div>
+
                                                     </div>
                                                 </div>
                                             );
