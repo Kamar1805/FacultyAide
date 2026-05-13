@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
-import { Plus, Users, BookOpen, Layers, X, Check, Trash2, Clock, Search, Edit2, ChevronRight, Filter } from 'lucide-react';
+import { Plus, Users, BookOpen, Layers, X, Check, Trash2, Clock, Search, Edit2, ChevronRight, Filter, Ban } from 'lucide-react';
 import InstructionGuide from '../../components/InstructionGuide';
 import ConfirmationDialog from '../../components/ConfirmationDialog';
 import { db } from '../../firebase';
@@ -15,8 +15,15 @@ const CourseCard = ({ course, onEdit, onDelete }) => (
         {/* Subtle Top Gradient Bar */}
         <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#00008b] to-[#579044] opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
 
-        <div className="flex justify-between items-start mb-3">
-            <span className="text-base font-black text-slate-900 uppercase tracking-tight">{course.code}</span>
+            <div className="flex justify-between items-start mb-3">
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-base font-black text-slate-900 uppercase tracking-tight">{course.code}</span>
+                    {course.excludeFromTimetable && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-100 text-amber-950 text-[9px] font-black uppercase tracking-wide border border-amber-200/80">
+                            <Ban size={10} /> excluded from timetable
+                        </span>
+                    )}
+                </div>
             <div className="flex items-center gap-2">
                 {course.creditUnit && (
                     <span className="px-2.5 py-1 bg-slate-50 text-slate-500 text-[10px] font-black rounded-lg uppercase border border-slate-200/60 transition-colors group-hover:bg-slate-100">
@@ -86,6 +93,7 @@ const Courses = () => {
         level: '100',
         semester: 'First',
         creditUnit: '2',
+        excludeFromTimetable: false,
     });
 
     // Delete confirmation state
@@ -97,6 +105,8 @@ const Courses = () => {
     const [selectedDept, setSelectedDept] = useState('All');
     const [selectedLevel, setSelectedLevel] = useState('All');
     const [selectedSemester, setSelectedSemester] = useState('All');
+    /** all | schedulable | excluded */
+    const [timetableFilter, setTimetableFilter] = useState('all');
     
     // Toast Notification State
     const [toastMessage, setToastMessage] = useState('');
@@ -116,7 +126,12 @@ const Courses = () => {
         const matchesDept = selectedDept === 'All' || course.department === selectedDept;
         const matchesLevel = selectedLevel === 'All' || course.level === selectedLevel;
         const matchesSemester = selectedSemester === 'All' || course.semester === selectedSemester;
-        return matchesSearch && matchesDept && matchesLevel && matchesSemester;
+        const timetableOk = timetableFilter === 'all'
+            ? true
+            : timetableFilter === 'schedulable'
+                ? !course.excludeFromTimetable
+                : !!course.excludeFromTimetable;
+        return matchesSearch && matchesDept && matchesLevel && matchesSemester && timetableOk;
     });
 
     const handleEditClick = (course) => {
@@ -126,7 +141,8 @@ const Courses = () => {
             department: course.department || '',
             level: course.level,
             semester: course.semester || 'First',
-            creditUnit: course.creditUnit || '2'
+            creditUnit: course.creditUnit || '2',
+            excludeFromTimetable: !!course.excludeFromTimetable,
         });
         setLecturerSearch(course.lecturer); // Pre-fill search with current lecturer
         setEditId(course.id);
@@ -160,6 +176,7 @@ const Courses = () => {
                 level: newCourse.level,
                 semester: newCourse.semester,
                 creditUnit: newCourse.creditUnit,
+                excludeFromTimetable: !!newCourse.excludeFromTimetable,
                 updatedAt: new Date().toISOString()
             };
 
@@ -177,7 +194,7 @@ const Courses = () => {
 
             setIsAdding(false);
             setNewCourse({
-                code: '', title: '', department: '', level: '100', semester: 'First', creditUnit: '2'
+                code: '', title: '', department: '', level: '100', semester: 'First', creditUnit: '2', excludeFromTimetable: false,
             });
             setLecturerSearch('');
             setIsEditing(false);
@@ -233,6 +250,7 @@ const Courses = () => {
                 steps={[
                     "Define the course catalog with Code, Title, Department, and Level.",
                     "Set the Semester (First/Second) for each course.",
+                    "Use Exclude from timetable when a module must stay in the catalog but never be auto-scheduled (e.g. project-only, withdrawn offering).",
                     "Detailed configurations (Lecturer, Venue, Sections) are handled by the Coordinator."
                 ]}
             />
@@ -244,7 +262,7 @@ const Courses = () => {
                 </div>
                 {!isAdding ? (
                     <Button
-                        onClick={() => { setIsAdding(true); setIsEditing(false); setNewCourse({ code: '', title: '', department: '', level: '100', semester: 'First' }); }}
+                        onClick={() => { setIsAdding(true); setIsEditing(false); setNewCourse({ code: '', title: '', department: '', level: '100', semester: 'First', creditUnit: '2', excludeFromTimetable: false }); }}
                         className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200 transition-all hover:scale-[1.02] active:scale-95 px-6 font-bold"
                     >
                         <Plus className="mr-2 h-5 w-5" /> Add New Course
@@ -300,6 +318,16 @@ const Courses = () => {
                         <option value="All">All Semesters</option>
                         <option value="First">First Semester</option>
                         <option value="Second">Second Semester</option>
+                    </select>
+                    <select
+                        className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer hover:bg-slate-100 transition-colors max-w-[12rem]"
+                        value={timetableFilter}
+                        onChange={(e) => setTimetableFilter(e.target.value)}
+                        aria-label="Filter by timetable scheduling"
+                    >
+                        <option value="all">All (timetable)</option>
+                        <option value="schedulable">Schedulable only</option>
+                        <option value="excluded">Excluded from timetable</option>
                     </select>
                 </div>
             </div>
@@ -431,6 +459,23 @@ const Courses = () => {
                                         </div>
                                     </div>
                                 </div>
+                            </div>
+
+                            <div className="rounded-xl border border-amber-200/90 bg-amber-50/40 p-4 md:p-5">
+                                <label className="flex items-start gap-3 cursor-pointer group">
+                                    <input
+                                        type="checkbox"
+                                        className="mt-1 rounded border-slate-300 text-amber-700 focus:ring-amber-500/30"
+                                        checked={!!newCourse.excludeFromTimetable}
+                                        onChange={(e) => setNewCourse({ ...newCourse, excludeFromTimetable: e.target.checked })}
+                                    />
+                                    <span>
+                                        <span className="block text-sm font-black text-slate-900 uppercase tracking-wide">Exclude from timetable generation</span>
+                                        <span className="block text-xs text-slate-600 mt-1.5 leading-relaxed font-medium">
+                                            Course remains in the catalog but is hidden from coordinator lecture and exam timetable builders (and omitted from OR-Tools).
+                                        </span>
+                                    </span>
+                                </label>
                             </div>
 
 

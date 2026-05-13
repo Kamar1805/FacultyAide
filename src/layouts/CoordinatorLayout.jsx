@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { Calendar, Settings, FileText, LogOut, LayoutGrid, Menu, X, User, BookOpen, RefreshCw } from 'lucide-react';
+import { Calendar, Settings, FileText, LogOut, LayoutGrid, Menu, X, BookOpen, RefreshCw, SlidersHorizontal, MessageSquare } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { auth, db } from '../firebase';
+import { subscribeCoordinatorThreads } from '../services/timetableReviews';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import FcomBot from '../components/FcomBot';
@@ -13,6 +14,7 @@ const CoordinatorLayout = () => {
     const [isLoggingOut, setIsLoggingOut] = useState(false);
     const [isPageLoading, setIsPageLoading] = useState(false);
     const [userData, setUserData] = useState({ name: 'Coordinator', department: 'General', role: 'Timetable Coordinator' });
+    const [feedbackUnread, setFeedbackUnread] = useState(0);
     const location = useLocation();
 
     // Reset page loader on any navigation
@@ -48,6 +50,14 @@ const CoordinatorLayout = () => {
     }, [navigate]);
 
     useEffect(() => {
+        if (!userData?.uid) return undefined;
+        const unsub = subscribeCoordinatorThreads(userData.uid, (list) => {
+            setFeedbackUnread(list.filter((t) => t.pendingCoordinatorAttention).length);
+        });
+        return () => unsub && unsub();
+    }, [userData?.uid]);
+
+    useEffect(() => {
         const u = auth.currentUser;
         if (!u) return;
         const ref = doc(db, 'users', u.uid);
@@ -74,6 +84,8 @@ const CoordinatorLayout = () => {
         { path: '/coordinator/lecture-timetable', icon: Calendar, label: 'Lecture Timetable' },
         { path: '/coordinator/exam-timetable', icon: FileText, label: 'Exam Timetable' },
         { path: '/coordinator/constraints', icon: Settings, label: 'Dept constraints' },
+        { path: '/coordinator/feedback', icon: MessageSquare, label: 'Admin feedback', badge: feedbackUnread },
+        { path: '/coordinator/settings', icon: SlidersHorizontal, label: 'Profile & Settings' },
     ];
 
     return (
@@ -135,7 +147,19 @@ const CoordinatorLayout = () => {
                                 `}
                             >
                                 <item.icon size={22} className={`${isSidebarOpen ? "mr-4" : ""} shrink-0`} />
-                                {isSidebarOpen && <span className="text-sm font-medium">{item.label}</span>}
+                                {isSidebarOpen && (
+                                    <span className="text-sm font-medium flex-1 flex items-center gap-2 min-w-0">
+                                        {item.label}
+                                        {item.badge > 0 && (
+                                            <span className="ml-auto text-[10px] font-black bg-amber-300 text-amber-950 px-2 py-0.5 rounded-full shrink-0">
+                                                {item.badge > 9 ? '9+' : item.badge}
+                                            </span>
+                                        )}
+                                    </span>
+                                )}
+                                {!isSidebarOpen && item.badge > 0 && (
+                                    <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-[#00008b]" aria-hidden />
+                                )}
 
                                 {!isSidebarOpen && (
                                     <div className="absolute left-16 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none whitespace-nowrap hidden lg:block">
@@ -176,9 +200,12 @@ const CoordinatorLayout = () => {
                             <Menu size={24} />
                         </button>
                         <div>
-                            <h1 className="text-xl lg:text-2xl font-black text-slate-900 tracking-tight font-display">
-                                Welcome, <span className="text-[#00008b] italic">{userData.name || 'Coordinator'}</span> 👋
+                            <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight font-display">
+                                Faculty<span className="text-[#00008b]">Aide</span>
                             </h1>
+                            <p className="text-[11px] sm:text-xs text-slate-500 font-medium truncate max-w-[10rem] sm:max-w-xs">
+                                {userData.name || 'Coordinator'}
+                            </p>
                         </div>
                     </div>
 

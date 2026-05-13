@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
-import { Calendar, Filter, Edit, Eye, Download, ChevronDown, Rocket, Plus, User, MapPin, AlertCircle, RefreshCw } from 'lucide-react';
+import { Calendar, Eye, Edit, Download, Rocket, User, RefreshCw, FileJson, Sheet, ChevronDown, AlertCircle } from 'lucide-react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../../firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { downloadLectureSchedulePdf, downloadScheduleJson, downloadScheduleCsv } from '../../utils/timetableExport';
 
 const DashboardOverview = () => {
     const navigate = useNavigate();
@@ -14,6 +14,7 @@ const DashboardOverview = () => {
     const [activeTimetable, setActiveTimetable] = useState(null);
     const [activeExamTimetable, setActiveExamTimetable] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [exportOpen, setExportOpen] = useState(false);
 
     const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -110,14 +111,54 @@ const DashboardOverview = () => {
                     </div>
                 </div>
                 {activeTimetable && (
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => navigate('/coordinator/lecture-timetable')}
-                        className="text-indigo-600 hover:text-indigo-700 self-start md:self-auto text-xs font-bold"
-                    >
-                        <Download size={14} className="mr-2" /> PDF / Export
-                    </Button>
+                    <div className="relative flex flex-wrap gap-2 justify-end" onMouseDown={(e) => e.stopPropagation()}>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            type="button"
+                            className="text-indigo-600 border-indigo-200 text-xs font-bold h-9 px-3"
+                            onClick={() => setExportOpen((v) => !v)}
+                        >
+                            <Download size={14} className="mr-2" /> Export <ChevronDown size={14} className="ml-1" />
+                        </Button>
+                        {exportOpen && (
+                            <div className="absolute right-0 top-full mt-1 w-56 rounded-xl border border-slate-200 bg-white shadow-xl z-30 py-2 text-left" onMouseDown={(e) => e.stopPropagation()}>
+                                <button
+                                    type="button"
+                                    className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 text-left"
+                                    onClick={() => {
+                                        setExportOpen(false);
+                                        void downloadLectureSchedulePdf(activeTimetable.schedule || [], {
+                                            department: userData?.department,
+                                            level: 'All',
+                                            filePrefix: `${(activeTimetable.name || 'timetable').replace(/\s+/g, '-').slice(0, 40)}`,
+                                            subtitle: activeTimetable.name,
+                                        });
+                                    }}
+                                >
+                                    PDF — all levels
+                                </button>
+                                <button
+                                    type="button"
+                                    className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 text-left"
+                                    onClick={() => {
+                                        setExportOpen(false);
+                                        void downloadLectureSchedulePdf(activeTimetable.schedule || [], {
+                                            department: userData?.department,
+                                            level: selectedLevel,
+                                            filePrefix: `${(activeTimetable.name || 'timetable').replace(/\s+/g, '-').slice(0, 40)}-${selectedLevel}L`,
+                                            subtitle: `${activeTimetable.name} · ${selectedLevel} Level`,
+                                        });
+                                    }}
+                                >
+                                    PDF — {selectedLevel} level only
+                                </button>
+                                <button type="button" className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 flex items-center gap-2" onClick={() => { setExportOpen(false); downloadScheduleJson(activeTimetable.schedule || [], { department: userData?.department, name: `${(activeTimetable.name || 'timetable').replace(/\s+/g, '-')}-all` }); }}><FileJson size={14} /> JSON</button>
+                                <button type="button" className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 flex items-center gap-2" onClick={() => { setExportOpen(false); downloadScheduleCsv(activeTimetable.schedule || [], { department: userData?.department, name: `${(activeTimetable.name || 'timetable').replace(/\s+/g, '-')}-all` }); }}><Sheet size={14} /> CSV</button>
+                                <button type="button" className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 text-indigo-700" onClick={() => { setExportOpen(false); navigate('/coordinator/lecture-timetable'); }}>Open full generator</button>
+                            </div>
+                        )}
+                    </div>
                 )}
             </div>
 

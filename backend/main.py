@@ -111,6 +111,8 @@ def _restriction_window_hours(constraint: Dict[str, Any]) -> Optional[Tuple[int,
         return (9, 13)
     if ts == "Afternoon":
         return (13, 18)
+    if ts == "Late":
+        return (16, 19)
     if ts == "All Day":
         return (9, 18)
     start = constraint.get("start")
@@ -142,14 +144,15 @@ def _matches_course_code(c: "CourseConfig", code: Optional[str]) -> bool:
 def apply_exclusion_constraints(
     model: cp_model.CpModel,
     assignments: Dict[Tuple[str, str, int, int], Any],
-    req: "GenerateRequest",
+    courses_scope: List["CourseConfig"],
+    constraints: List[Dict[str, Any]],
     durations: Dict[str, int],
     venues_work: List["Venue"],
     days_map: Dict[int, str],
     num_hours: int,
 ) -> None:
     """Apply Exclusion rules from Firestore (legacy) or AI-parsed NL."""
-    for raw in req.constraints or []:
+    for raw in constraints or []:
         ctype = str(raw.get("type") or "Exclusion").lower()
         if ctype != "exclusion":
             continue
@@ -168,8 +171,13 @@ def apply_exclusion_constraints(
         lect = raw.get("lecturer")
         course_code = raw.get("course")
         level = raw.get("level")
+        dept_filter = raw.get("department") or raw.get("targetDepartment")
 
-        targets: List[CourseConfig] = list(req.courses)
+        targets: List[CourseConfig] = list(courses_scope)
+        if dept_filter and str(dept_filter).strip():
+            df = str(dept_filter).strip().lower()
+            targets = [c for c in targets if _norm(c.department or "") == df]
+
         if dept_wide:
             if level is not None and str(level).strip() != "":
                 targets = [c for c in targets if str(c.level) == str(level)]
@@ -260,6 +268,7 @@ class CourseConfig(BaseModel):
     parent_code: Optional[str] = Field(default=None, alias="parentCode")
     department: Optional[str] = None
     is_common: bool = Field(default=False, alias="isCommon")
+    exclude_from_timetable: bool = Field(default=False, alias="excludeFromTimetable")
 
 
 class Venue(BaseModel):
@@ -269,6 +278,7 @@ class Venue(BaseModel):
     type: Optional[str] = None
     dept: Optional[str] = None
     block: Optional[str] = None
+    status: Optional[str] = None
 
 
 class GenerateRequest(BaseModel):
@@ -288,11 +298,23 @@ async def generate_schedule(req: GenerateRequest):
         num_days = 5
         num_hours = 8
 
-        durations = {c.id: parse_duration_hours(c.duration) for c in req.courses}
+        courses_work: List[CourseConfig] = [c for c in req.courses if not c.exclude_from_timetable]
+        if not courses_work:
+            return {
+                "schedule": [],
+                "conflicts": [
+                    {
+                        "code": "System",
+                        "reason": "No courses to schedule — all selected courses may be excluded from timetable generation.",
+                    }
+                ],
+            }
+
+        durations = {c.id: parse_duration_hours(c.duration) for c in courses_work}
 
         # Inject a synthetic online venue if any online course and none exists in payload
-        venues_work: List[Venue] = list(req.venues)
-        has_online_course = any(_course_delivery_family(c.type) == "online" for c in req.courses)
+        venues_work: List[Venue] = [v for v in req.venues if (v.status or "").lower() != "maintenance"]
+        has_online_course = any(_course_delivery_family(c.type) == "online" for c in courses_work)
         has_online_venue = any(is_online_venue(v) for v in venues_work)
         if has_online_course and not has_online_venue:
             venues_work.append(
@@ -313,7 +335,7 @@ async def generate_schedule(req: GenerateRequest):
         model = cp_model.CpModel()
         assignments = {}
 
-        for c in req.courses:
+        for c in courses_work:
             dur = durations[c.id]
             try:
                 c_students = int(c.students) if c.students else 0
@@ -355,7 +377,7 @@ async def generate_schedule(req: GenerateRequest):
                         assignments[(c.id, v.id, d, h)] = model.NewBoolVar(f"assign_c{c.id}_v{v.id}_d{d}_h{h}")
 
         is_scheduled = {}
-        for c in req.courses:
+        for c in courses_work:
             is_scheduled[c.id] = model.NewBoolVar(f"is_scheduled_c{c.id}")
             valid_starts = []
             for v in venues_work:
@@ -376,7 +398,7 @@ async def generate_schedule(req: GenerateRequest):
             for d in range(num_days):
                 for h in range(num_hours):
                     active_courses = []
-                    for c in req.courses:
+                    for c in courses_work:
                         dur = durations[c.id]
                         for start in range(max(0, h - dur + 1), min(h + 1, num_hours - dur + 1)):
                             key = (c.id, v.id, d, start)
@@ -387,10 +409,10 @@ async def generate_schedule(req: GenerateRequest):
 
         # Lecturer overlap (includes this dept + cross-dept preds)
         lecturers = list(
-            set(str(c.lecturer) for c in req.courses if c.lecturer and str(c.lecturer) != "TBA")
+            set(str(c.lecturer) for c in courses_work if c.lecturer and str(c.lecturer) != "TBA")
         )
         for lecturer in lecturers:
-            lecturer_courses = [c for c in req.courses if str(c.lecturer) == lecturer]
+            lecturer_courses = [c for c in courses_work if str(c.lecturer) == lecturer]
             for d in range(num_days):
                 for h in range(num_hours):
                     active_for_lecturer = []
@@ -409,7 +431,7 @@ async def generate_schedule(req: GenerateRequest):
 
         # Student cohort: same level + department bucket + section cannot take two classes at once
         cohort_map: Dict[Tuple[str, str, str], List[CourseConfig]] = {}
-        for c in req.courses:
+        for c in courses_work:
             key = cohort_key(c)
             cohort_map.setdefault(key, []).append(c)
 
@@ -432,14 +454,14 @@ async def generate_schedule(req: GenerateRequest):
         # Common courses: cannot run at the same time as any other course at the same level
         # (matches frontend timetableEngine behaviour for shared/university-wide modules)
         level_set = sorted(
-            {str(c.level) for c in req.courses if c.level is not None and str(c.level).strip() != ""}
+            {str(c.level) for c in courses_work if c.level is not None and str(c.level).strip() != ""}
         )
         for level in level_set:
             for d in range(num_days):
                 for h in range(num_hours):
                     commons_vars: List[Any] = []
                     others_vars: List[Any] = []
-                    for c in req.courses:
+                    for c in courses_work:
                         if str(c.level) != str(level):
                             continue
                         dur = durations[c.id]
@@ -458,11 +480,18 @@ async def generate_schedule(req: GenerateRequest):
                         model.Add(sum(others_vars) == 0).OnlyEnforceIf(any_common)
 
         apply_exclusion_constraints(
-            model, assignments, req, durations, venues_work, days_map, num_hours
+            model,
+            assignments,
+            courses_work,
+            req.constraints or [],
+            durations,
+            venues_work,
+            days_map,
+            num_hours,
         )
 
         # Friday prayers 1pm–2pm → block starts that cover hour index 4 (13:00)
-        for c in req.courses:
+        for c in courses_work:
             dur = durations[c.id]
             for v in venues_work:
                 for start in range(num_hours - dur + 1):
@@ -472,7 +501,7 @@ async def generate_schedule(req: GenerateRequest):
                             model.Add(assignments[key] == 0)
 
         objective_terms = []
-        for c in req.courses:
+        for c in courses_work:
             objective_terms.append(is_scheduled[c.id] * 10000)
 
         # Prefer earlier days and morning slots (secondary, small weights)
@@ -492,7 +521,7 @@ async def generate_schedule(req: GenerateRequest):
             final_schedule = []
             conflicts = []
 
-            for c in req.courses:
+            for c in courses_work:
                 if solver.Value(is_scheduled[c.id]) == 1:
                     for v in venues_work:
                         for d in range(num_days):

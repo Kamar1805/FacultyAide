@@ -1,14 +1,70 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
-import { Play, Calendar, Download, RefreshCw, Filter, ShieldCheck, Users, MapPin, Save, AlertTriangle, Clock, Edit3 } from 'lucide-react';
+import { Play, Calendar, Download, RefreshCw, Filter, ShieldCheck, Users, MapPin, Save, AlertTriangle, Clock, Edit3, MessageSquare } from 'lucide-react';
 import InstructionGuide from '../../components/InstructionGuide';
 import { collection, getDocs, addDoc, Timestamp } from 'firebase/firestore';
-import { db } from '../../firebase';
-import { useOutletContext } from 'react-router-dom';
+import { auth, db } from '../../firebase';
+import { logActivity } from '../../utils/activityLog';
+import { useOutletContext, useSearchParams, useNavigate } from 'react-router-dom';
+import { analyzeExamScheduleBundles } from '../../utils/timetableClashAnalysis';
+import { createReviewThread, addThreadMessage, getReviewThread, markCoordinatorCaughtUp } from '../../services/timetableReviews';
+import OptionalNoteToAdminsModal from '../../components/OptionalNoteToAdminsModal';
+
+function parseExamStartMs(dateStr, hhmm) {
+    const t = `${dateStr}T${String(hhmm || '09:00').slice(0, 5)}:00`;
+    const x = Date.parse(t);
+    return Number.isNaN(x) ? null : x;
+}
+
+function examIntervalsOverlap(exA, exB) {
+    if (!exA || !exB || exA.date !== exB.date) return false;
+    const ma = parseExamStartMs(exA.date, exA.startTime);
+    const mb = parseExamStartMs(exB.date, exB.startTime);
+    if (ma == null || mb == null) return false;
+    const da = (parseInt(exA.durationMins, 10) || 90) * 60000;
+    const db = (parseInt(exB.durationMins, 10) || 90) * 60000;
+    return ma < mb + db && mb < ma + da;
+}
+
+function examPairHardClash(exA, exB) {
+    if (!examIntervalsOverlap(exA, exB)) return false;
+    const vidA = String(exA.venueId || '');
+    const vidB = String(exB.venueId || '');
+    const tangible = vidA && vidB && vidA !== 'TBH' && vidB !== 'TBH';
+    if (tangible && vidA === vidB) return true;
+    if (String(exA.department || '') === String(exB.department || '') && String(exA.level || '') === String(exB.level || ''))
+        return true;
+    return false;
+}
+
+function candidateClashesBuckets(candidate, internal, externalFlat) {
+    for (const ex of externalFlat) {
+        if (examPairHardClash(candidate, ex)) return true;
+    }
+    for (const ex of internal) {
+        if (examPairHardClash(candidate, ex)) return true;
+    }
+    return false;
+}
+
+function aggregateExamConflicts(draft, externalFlat) {
+    const raw = analyzeExamScheduleBundles([
+        { label: 'This timetable', exams: draft || [] },
+        { label: 'Other departments (published)', exams: externalFlat || [] },
+    ]);
+    if (!raw.hasClashes) return [];
+    return raw.clashes.map(
+        (c) =>
+            `${c.type === 'venue' ? 'VENUE' : 'COHORT'} clash: ${c.a} ↔ ${c.b}. Suggested fix: ${c.fix}`
+    );
+}
 
 const ExamTimetable = () => {
     const { userData } = useOutletContext();
+    const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const reviewThreadId = searchParams.get('reviewThread');
     const [isGenerating, setIsGenerating] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [timetable, setTimetable] = useState(null);
@@ -26,36 +82,90 @@ const ExamTimetable = () => {
     const [draggedExamId, setDraggedExamId] = useState(null);
     const [editingExamId, setEditingExamId] = useState(null);
     const [editForm, setEditForm] = useState(null);
+    const [sendingReview, setSendingReview] = useState(false);
+    const [adminNoteModalOpen, setAdminNoteModalOpen] = useState(false);
 
-    const getConflicts = (examsList) => {
-        let newConflicts = [];
-        for (let i = 0; i < examsList.length; i++) {
-            for (let j = i + 1; j < examsList.length; j++) {
-                const examA = examsList[i];
-                const examB = examsList[j];
-                
-                if (examA.date === examB.date) {
-                    const startA = new Date(`1970-01-01T${examA.startTime}`);
-                    const endA = new Date(startA.getTime() + examA.durationMins * 60000);
-                    
-                    const startB = new Date(`1970-01-01T${examB.startTime}`);
-                    const endB = new Date(startB.getTime() + examB.durationMins * 60000);
-                    
-                    const isOverlapping = (startA < endB && startB < endA);
-                    
-                    if (isOverlapping) {
-                        if (examA.level === examB.level && examA.department === examB.department) {
-                            newConflicts.push(`Overlap: ${examA.courseCode} & ${examB.courseCode} (${examA.level}L ${examA.department}) at same time.`);
-                        }
-                        else if (examA.venueId === examB.venueId && examA.venueId !== 'TBH') {
-                            newConflicts.push(`Venue Clash: ${examA.courseCode} & ${examB.courseCode} both assigned to ${examA.venueName}.`);
-                        }
-                    }
-                }
+    const [externalExamRows, setExternalExamRows] = useState([]);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            if (!userData?.department) return;
+            try {
+                const snap = await getDocs(collection(db, 'exam_timetables'));
+                const flat = [];
+                snap.docs.forEach((docSnap) => {
+                    const t = docSnap.data();
+                    if (t.published !== true && t.isActive !== true) return;
+                    if (String(t.department || '') === String(userData.department || '')) return;
+                    for (const row of t.schedule || []) flat.push(row);
+                });
+                if (!cancelled) setExternalExamRows(flat);
+            } catch (e) {
+                console.error(e);
             }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [userData?.department]);
+
+    useEffect(() => {
+        if (!timetable?.length) {
+            setConflicts([]);
+            return;
         }
-        return newConflicts;
-    };
+        setConflicts(aggregateExamConflicts(timetable, externalExamRows));
+    }, [timetable, externalExamRows]);
+
+    useEffect(() => {
+        if (!reviewThreadId || !userData?.uid) return undefined;
+        let cancelled = false;
+        (async () => {
+            try {
+                const t = await getReviewThread(reviewThreadId);
+                if (cancelled) return;
+                if (!t || t.coordinatorUid !== userData.uid) {
+                    if (t && t.coordinatorUid !== userData.uid) {
+                        alert('This review thread belongs to another coordinator.');
+                    }
+                    setSearchParams((p) => {
+                        p.delete('reviewThread');
+                        return p;
+                    }, { replace: true });
+                    return;
+                }
+                if ((t.kind || 'lecture') === 'lecture') {
+                    navigate(`/coordinator/lecture-timetable?reviewThread=${reviewThreadId}`, { replace: true });
+                    return;
+                }
+                const snap = t.snapshot || {};
+                const sched = Array.isArray(snap.schedule) ? [...snap.schedule] : [];
+                setTimetable(sched);
+                if (snap.stats && typeof snap.stats === 'object') {
+                    setGenerationStats(snap.stats);
+                }
+                if (snap.semester === 'First' || snap.semester === 'Second') {
+                    setConfig((c) => ({ ...c, semester: snap.semester }));
+                }
+                markCoordinatorCaughtUp(reviewThreadId).catch(() => {});
+                setSearchParams((p) => {
+                    p.delete('reviewThread');
+                    return p;
+                }, { replace: true });
+            } catch (e) {
+                console.error(e);
+                alert('Could not load this review thread. Check Firestore rules and that you are signed in as the coordinator who submitted it.');
+                setSearchParams((p) => {
+                    p.delete('reviewThread');
+                    return p;
+                }, { replace: true });
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [reviewThreadId, userData?.uid, navigate, setSearchParams]);
 
     const handleGenerate = async () => {
         setIsGenerating(true);
@@ -63,80 +173,120 @@ const ExamTimetable = () => {
             const coursesSnapshot = await getDocs(collection(db, 'courses'));
             const venuesSnapshot = await getDocs(collection(db, 'venues'));
             
-            let allCourses = coursesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            const allVenues = venuesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(v => v.status !== 'maintenance');
+            let allCourses = coursesSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+            const allVenues = venuesSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })).filter((v) => v.status !== 'maintenance');
             setVenues(allVenues);
-            
-            allCourses = allCourses.filter(c => c.semester === config.semester || !c.semester);
-            
-            if (allCourses.length === 0) {
-                alert(`No courses found for ${config.semester} semester.`);
+
+            allCourses = allCourses.filter((c) => c.semester === config.semester || !c.semester);
+            const deptCourses = allCourses.filter((c) => String(c.department || '') === String(userData?.department || '') && !c.excludeFromTimetable);
+
+            if (deptCourses.length === 0) {
+                alert(
+                    userData?.department
+                        ? `No ${config.semester} semester courses assigned to "${userData.department}".`
+                        : 'No courses for your department.'
+                );
                 setIsGenerating(false);
                 return;
             }
 
-            let generatedExams = [];
-            let currentDate = new Date(config.startDate);
-            let currentSession = 'Morning'; 
-            let coursesQueue = [...allCourses].sort((a, b) => a.level - b.level); 
-            
-            while (coursesQueue.length > 0) {
-                const course = coursesQueue.shift();
-                
-                const units = parseInt(course.creditUnit) || 2;
-                const durationMins = units === 3 ? 120 : units >= 4 ? 150 : units === 1 ? 60 : 90; 
-                
-                let departmentVenues = allVenues.filter(v => v.dept === course.department);
-                let assignedVenue = departmentVenues.length > 0 
-                    ? departmentVenues[Math.floor(Math.random() * departmentVenues.length)] 
-                    : null;
-                
-                if (!assignedVenue) {
-                    const generalVenues = allVenues.filter(v => v.dept === 'General');
-                    assignedVenue = generalVenues.length > 0 
-                        ? generalVenues[Math.floor(Math.random() * generalVenues.length)] 
-                        : (allVenues.length > 0 ? allVenues[0] : { id: 'TBH', name: 'TBA', capacity: 50 });
+            const extSnap = await getDocs(collection(db, 'exam_timetables'));
+            const externalFlat = [];
+            extSnap.docs.forEach((docSnap) => {
+                const t = docSnap.data();
+                if (t.published !== true && t.isActive !== true) return;
+                if (String(t.department || '') === String(userData?.department || '')) return;
+                for (const row of t.schedule || []) externalFlat.push(row);
+            });
+            setExternalExamRows(externalFlat);
+
+            const bumpDay = (d) => {
+                const nd = new Date(d);
+                nd.setDate(nd.getDate() + 1);
+                if (nd.getDay() === 6) nd.setDate(nd.getDate() + 2);
+                else if (nd.getDay() === 0) nd.setDate(nd.getDate() + 1);
+                return nd;
+            };
+
+            const generatedExams = [];
+            let cursor = new Date(config.startDate);
+            let session = 'Morning';
+            const queue = [...deptCourses].sort((a, b) => a.level - b.level);
+
+            outer: while (queue.length > 0) {
+                const course = queue.shift();
+                const units = parseInt(course.creditUnit, 10) || 2;
+                const durationMins = units === 3 ? 120 : units >= 4 ? 150 : units === 1 ? 60 : 90;
+
+                let placed = false;
+                let tries = 0;
+                while (!placed && tries < 3200) {
+                    tries++;
+                    const dateString = cursor.toISOString().split('T')[0];
+                    const startTime = session === 'Morning' ? config.morningStart : config.afternoonStart;
+
+                    const deptV = allVenues.filter((v) => v.dept === course.department);
+                    const genV = allVenues.filter((v) => v.dept === 'General');
+                    let pool =
+                        deptV.length > 0 ? [...deptV] : [...genV, ...allVenues.filter((x) => !genV.some((g) => g.id === x.id))];
+                    if (pool.length === 0) pool = [{ id: 'TBH', name: 'TBA', capacity: 50 }];
+                    pool = [...pool].sort(() => Math.random() - 0.5);
+
+                    for (const assignedVenue of pool) {
+                        const candidate = {
+                            id: course.id,
+                            courseCode: course.code,
+                            courseTitle: course.title,
+                            department: course.department,
+                            level: course.level,
+                            creditUnit: course.creditUnit || 2,
+                            durationMins,
+                            venueId: assignedVenue.id,
+                            venueName: assignedVenue.name,
+                            venueCapacity: assignedVenue.capacity,
+                            date: dateString,
+                            startTime,
+                            session,
+                            invigilatorsAssigned: Math.max(
+                                1,
+                                Math.ceil((assignedVenue.capacity === 'N/A' ? 50 : assignedVenue.capacity) / 40)
+                            ),
+                        };
+                        if (!candidateClashesBuckets(candidate, generatedExams, externalFlat)) {
+                            generatedExams.push(candidate);
+                            placed = true;
+                            if (session === 'Morning') {
+                                session = 'Afternoon';
+                            } else {
+                                session = 'Morning';
+                                cursor = bumpDay(cursor);
+                            }
+                            continue outer;
+                        }
+                    }
+
+                    if (session === 'Morning') {
+                        session = 'Afternoon';
+                    } else {
+                        session = 'Morning';
+                        cursor = bumpDay(cursor);
+                    }
                 }
-                
-                const dateString = currentDate.toISOString().split('T')[0];
-                
-                generatedExams.push({
-                    id: course.id,
-                    courseCode: course.code,
-                    courseTitle: course.title,
-                    department: course.department,
-                    level: course.level,
-                    creditUnit: course.creditUnit || 2,
-                    durationMins: durationMins,
-                    venueId: assignedVenue.id,
-                    venueName: assignedVenue.name,
-                    venueCapacity: assignedVenue.capacity,
-                    date: dateString,
-                    startTime: currentSession === 'Morning' ? config.morningStart : config.afternoonStart,
-                    session: currentSession,
-                    invigilatorsAssigned: Math.max(1, Math.ceil((assignedVenue.capacity === 'N/A' ? 50 : assignedVenue.capacity) / 40))
-                });
-                
-                if (currentSession === 'Morning') {
-                    currentSession = 'Afternoon';
-                } else {
-                    currentSession = 'Morning';
-                    currentDate.setDate(currentDate.getDate() + 1);
-                    if (currentDate.getDay() === 6) currentDate.setDate(currentDate.getDate() + 2);
-                    else if (currentDate.getDay() === 0) currentDate.setDate(currentDate.getDate() + 1);
-                }
+
+                alert(
+                    `Could not place "${course.code}" without clashing venues/cohorts elsewhere. Leave more dates or regenerate.`
+                );
             }
-            
+
             generatedExams.sort((a, b) => new Date(a.date) - new Date(b.date));
-            
+
             setGenerationStats({
                 totalExams: generatedExams.length,
-                startDate: generatedExams[0].date,
-                endDate: generatedExams[generatedExams.length - 1].date
+                startDate: generatedExams[0]?.date,
+                endDate: generatedExams[generatedExams.length - 1]?.date,
             });
-            
+
             setTimetable(generatedExams);
-            setConflicts(getConflicts(generatedExams));
         } catch (error) {
             console.error("Error generating exams:", error);
             alert("Failed to generate timetable.");
@@ -152,14 +302,29 @@ const ExamTimetable = () => {
         }
         setIsSaving(true);
         try {
-            await addDoc(collection(db, 'exam_timetables'), {
+            const ref = await addDoc(collection(db, 'exam_timetables'), {
                 department: userData?.department || 'General',
+                coordinatorUid: auth.currentUser?.uid || null,
+                coordinatorName: userData?.name || '',
                 semester: config.semester,
                 isActive: true,
                 schedule: timetable,
                 stats: generationStats,
                 createdAt: Timestamp.now(),
+                published: true,
+                publishedAt: new Date().toISOString(),
+                type: 'exam',
                 name: `${config.semester} Semester Exam Timetable`
+            });
+            await logActivity(db, {
+                uid: auth.currentUser?.uid,
+                userName: userData?.name,
+                userRole: 'coordinator',
+                department: userData?.department,
+                action: 'exam_timetable_published',
+                targetType: 'exam_timetables',
+                targetId: ref.id,
+                meta: { semester: config.semester },
             });
             alert("Exam Timetable Published Successfully!");
         } catch (err) {
@@ -167,6 +332,59 @@ const ExamTimetable = () => {
             alert("Failed to publish timetable.");
         } finally {
             setIsSaving(false);
+        }
+    };
+
+    const handleSendExamToAdmins = () => {
+        const uid = auth.currentUser?.uid;
+        if (!uid || !userData?.department) {
+            alert('Sign in as a coordinator with a department to submit for review.');
+            return;
+        }
+        if (!timetable?.length) {
+            alert('Generate an exam timetable first.');
+            return;
+        }
+        if (conflicts.length > 0 && !window.confirm(`${conflicts.length} conflict flag(s) remain. Send this draft to admins anyway?`))
+            return;
+        setAdminNoteModalOpen(true);
+    };
+
+    const submitExamReviewWithNote = async (noteRaw) => {
+        const uid = auth.currentUser?.uid;
+        if (!uid || !userData?.department) return;
+
+        setSendingReview(true);
+        try {
+            const threadId = await createReviewThread({
+                coordinatorUid: uid,
+                coordinatorName: userData?.name || '',
+                coordinatorEmail: userData?.email || '',
+                department: userData.department,
+                kind: 'exam',
+                title: `${userData.department} · ${config.semester} Semester · Exam draft`,
+                snapshot: {
+                    schedule: timetable,
+                    stats: generationStats,
+                    semester: config.semester,
+                    conflicts,
+                },
+            });
+            await addThreadMessage(threadId, {
+                senderRole: 'coordinator',
+                senderUid: uid,
+                senderName: userData?.name || '',
+                body:
+                    (noteRaw || '').trim() ||
+                    'Submitted exam timetable draft for review. Conflicts array lists venue/cohort issues if any.',
+            });
+            setAdminNoteModalOpen(false);
+            alert('Sent to admins. Use Admin feedback in the sidebar to read replies and adjust if needed.');
+        } catch (e) {
+            console.error(e);
+            alert('Could not send to admins. Check Firestore security rules for timetable_review_threads.');
+        } finally {
+            setSendingReview(false);
         }
     };
 
@@ -222,14 +440,13 @@ const ExamTimetable = () => {
                 venueCapacity: tempCapacity
             };
             
-            const newC = getConflicts(newTimetable);
+            const newC = aggregateExamConflicts(newTimetable, externalExamRows);
             if(newC.length > 0) {
                 alert(`Swap failed. It introduces the following conflict(s):\n- ${newC.join('\n- ')}`);
                 return prev; // Revert
             }
 
             newTimetable.sort((a,b) => new Date(a.date) - new Date(b.date));
-            setConflicts([]);
             return newTimetable;
         });
         setDraggedExamId(null);
@@ -254,13 +471,12 @@ const ExamTimetable = () => {
                 }
                 return ex;
             });
-            const newC = getConflicts(newTbl);
+            const newC = aggregateExamConflicts(newTbl, externalExamRows);
             if(newC.length > 0) {
                 alert(`Edit failed. It introduces the following conflict(s):\n- ${newC.join('\n- ')}`);
                 return prev;
             }
             newTbl.sort((a,b) => new Date(a.date) - new Date(b.date));
-            setConflicts([]);
             return newTbl;
         });
         setEditingExamId(null);
@@ -318,10 +534,22 @@ const ExamTimetable = () => {
                             <h2 className="text-3xl font-black text-slate-900 tracking-tight">Generated Results</h2>
                             <p className="text-slate-500 font-medium mt-1">Period: {generationStats.startDate} to {generationStats.endDate} • {generationStats.totalExams} Exams Scheduled</p>
                         </div>
-                        <Button onClick={handleSave} disabled={isSaving || conflicts.length>0} className="gap-2 bg-slate-900 text-white hover:bg-slate-800 shadow-xl shadow-slate-900/10 px-6 h-12 rounded-xl text-md">
-                            {isSaving ? <RefreshCw className="animate-spin" size={18} /> : <Save size={18} />} 
-                            Publish to Dashboard
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                className="gap-2 border-emerald-200 text-emerald-900 hover:bg-emerald-50 px-6 h-12 rounded-xl font-bold"
+                                disabled={sendingReview}
+                                onClick={() => handleSendExamToAdmins()}
+                            >
+                                {sendingReview ? <RefreshCw className="animate-spin" size={18} /> : <MessageSquare size={18} />}
+                                Send to admins
+                            </Button>
+                            <Button onClick={handleSave} disabled={isSaving || conflicts.length>0} className="gap-2 bg-slate-900 text-white hover:bg-slate-800 shadow-xl shadow-slate-900/10 px-6 h-12 rounded-xl text-md font-bold">
+                                {isSaving ? <RefreshCw className="animate-spin" size={18} /> : <Save size={18} />}
+                                Publish to Dashboard
+                            </Button>
+                        </div>
                     </div>
 
                     {['100', '200', '300', '400'].map(level => {
@@ -412,6 +640,17 @@ const ExamTimetable = () => {
                     </p>
                 </div>
             )}
+
+            <OptionalNoteToAdminsModal
+                open={adminNoteModalOpen}
+                onClose={() => {
+                    if (!sendingReview) setAdminNoteModalOpen(false);
+                }}
+                onSend={(note) => void submitExamReviewWithNote(note)}
+                pending={sendingReview}
+                title="Send exam draft to administrators"
+                description="Optional note attached to this review thread. Coordinators can clarify context, risks, or requested checks for the admin team."
+            />
 
             {/* Edit Modal */}
             {editingExamId && (

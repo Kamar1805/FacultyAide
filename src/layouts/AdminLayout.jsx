@@ -11,18 +11,22 @@ import {
     X,
     RefreshCw,
     UserSquare2,
+    SlidersHorizontal,
+    ClipboardList,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { cn } from '../lib/utils';
 import { motion } from 'framer-motion';
 import FcomBot from '../components/FcomBot';
 import { auth } from '../firebase';
-import { signOut } from 'firebase/auth';
+import { signOut, onAuthStateChanged } from 'firebase/auth';
+import { subscribeAllThreads } from '../services/timetableReviews';
 
 const AdminLayout = () => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isLoggingOut, setIsLoggingOut] = useState(false);
     const [isPageLoading, setIsPageLoading] = useState(false);
+    const [reviewsUnread, setReviewsUnread] = useState(0);
     const navigate = useNavigate();
     const location = useLocation();
 
@@ -32,6 +36,27 @@ const AdminLayout = () => {
         const timer = setTimeout(() => setIsPageLoading(false), 600);
         return () => clearTimeout(timer);
     }, [location.pathname]);
+
+    useEffect(() => {
+        let unsubThreads;
+        const unsubAuth = onAuthStateChanged(auth, (user) => {
+            if (unsubThreads) {
+                unsubThreads();
+                unsubThreads = undefined;
+            }
+            if (!user) {
+                setReviewsUnread(0);
+                return;
+            }
+            unsubThreads = subscribeAllThreads((list) => {
+                setReviewsUnread(list.filter((t) => t.pendingAdminAttention).length);
+            });
+        });
+        return () => {
+            unsubAuth();
+            if (unsubThreads) unsubThreads();
+        };
+    }, []);
 
     const handleLogout = async () => {
         setIsLoggingOut(true);
@@ -50,6 +75,13 @@ const AdminLayout = () => {
         { name: 'Lecturers', icon: Users, path: '/admin/lecturers' },
         { name: 'Course Management', icon: BookOpen, path: '/admin/courses' },
         { name: 'Coordinators', icon: UserSquare2, path: '/admin/coordinators' },
+        {
+            name: 'Timetable reviews',
+            icon: ClipboardList,
+            path: '/admin/timetable-reviews',
+            badge: reviewsUnread,
+        },
+        { name: 'Settings', icon: SlidersHorizontal, path: '/admin/settings' },
     ];
 
     return (
@@ -94,14 +126,26 @@ const AdminLayout = () => {
                             end={item.path === '/admin'}
                             onClick={() => window.innerWidth < 768 && setIsSidebarOpen(false)}
                             className={({ isActive }) => cn(
-                                "flex items-center px-4 py-3.5 rounded-xl transition-all group",
+                                "flex items-center px-4 py-3.5 rounded-xl transition-all group relative",
                                 isActive
                                     ? "bg-[#579044] text-white shadow-lg shadow-[#579044]/30 font-bold transform scale-[0.98]"
                                     : "text-blue-100 hover:bg-white/10 hover:text-white"
                             )}
                         >
                             <item.icon size={22} className={cn("shrink-0", isSidebarOpen ? "mr-4" : "mx-auto")} />
-                            {isSidebarOpen && <span className="text-sm font-medium">{item.name}</span>}
+                            {isSidebarOpen && (
+                                <span className="text-sm font-medium flex-1 flex items-center gap-2 min-w-0">
+                                    {item.name}
+                                    {(item.badge ?? 0) > 0 && (
+                                        <span className="ml-auto text-[10px] font-black bg-amber-300 text-amber-950 px-2 py-0.5 rounded-full shrink-0">
+                                            {item.badge > 9 ? '9+' : item.badge}
+                                        </span>
+                                    )}
+                                </span>
+                            )}
+                            {!isSidebarOpen && (item.badge ?? 0) > 0 && (
+                                <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-[#00008b]" aria-hidden />
+                            )}
 
                             {/* Tooltip for collapsed state (Desktop only) */}
                             {!isSidebarOpen && (

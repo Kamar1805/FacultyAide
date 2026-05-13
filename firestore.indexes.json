@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "saved_timetables",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "department", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

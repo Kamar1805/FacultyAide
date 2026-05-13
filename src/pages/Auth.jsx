@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { auth, db } from '../firebase';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { logActivity } from '../utils/activityLog';
 
 const Auth = () => {
     const navigate = useNavigate();
@@ -65,8 +66,26 @@ const Auth = () => {
                     return;
                 }
 
-                if (userRole === 'admin') navigate('/admin');
-                else if (userRole === 'coordinator') navigate('/coordinator');
+                if (userRole === 'admin') {
+                    await logActivity(db, {
+                        uid: user.uid,
+                        userName: userData.name,
+                        userRole: 'admin',
+                        action: 'user_login',
+                        path: '/admin',
+                    });
+                    navigate('/admin');
+                } else if (userRole === 'coordinator') {
+                    await logActivity(db, {
+                        uid: user.uid,
+                        userName: userData.name,
+                        userRole: 'coordinator',
+                        department: userData.department,
+                        action: 'user_login',
+                        path: '/coordinator',
+                    });
+                    navigate('/coordinator');
+                }
                 else {
                     setError("Unauthorized role. Please contact support.");
                 }

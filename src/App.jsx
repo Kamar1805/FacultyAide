@@ -11,6 +11,8 @@ import ClassroomManagement from './pages/admin/ClassroomManagement';
 import Courses from './pages/admin/Courses';
 import LecturerManagement from './pages/admin/LecturerManagement';
 import CoordinatorDirectory from './pages/admin/CoordinatorDirectory';
+import AdminSettings from './pages/admin/AdminSettings';
+import AdminTimetableReviews from './pages/admin/AdminTimetableReviews';
 
 // Coordinator Pages
 import CoordinatorLayout from './layouts/CoordinatorLayout';
@@ -19,6 +21,8 @@ import LectureTimetable from './pages/coordinator/LectureTimetable';
 import ExamTimetable from './pages/coordinator/ExamTimetable';
 import ConstraintSettings from './pages/coordinator/ConstraintSettings';
 import CourseManager from './pages/coordinator/CourseManager';
+import CoordinatorSettings from './pages/coordinator/CoordinatorSettings';
+import CoordinatorFeedback from './pages/coordinator/CoordinatorFeedback';
 
 function App() {
   return (
@@ -35,6 +39,8 @@ function App() {
             <Route path="lecturers" element={<LecturerManagement />} />
             <Route path="courses" element={<Courses />} />
             <Route path="coordinators" element={<CoordinatorDirectory />} />
+            <Route path="settings" element={<AdminSettings />} />
+            <Route path="timetable-reviews" element={<AdminTimetableReviews />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Route>
 
@@ -44,6 +50,8 @@ function App() {
             <Route path="courses" element={<CourseManager />} />
             <Route path="exam-timetable" element={<ExamTimetable />} />
             <Route path="constraints" element={<ConstraintSettings />} />
+            <Route path="settings" element={<CoordinatorSettings />} />
+            <Route path="feedback" element={<CoordinatorFeedback />} />
           </Route>
 
           {/* Fallback */}

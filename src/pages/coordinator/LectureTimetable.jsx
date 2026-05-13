@@ -1,24 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { useOutletContext, useNavigate } from 'react-router-dom';
-import { db } from '../../firebase';
+import { useOutletContext, useNavigate, useSearchParams } from 'react-router-dom';
+import { auth, db } from '../../firebase';
 import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc, onSnapshot, orderBy } from 'firebase/firestore';
-import { generateSchedule, DAYS, HOURS } from '../../utils/timetableEngine';
 import { parseAIConstraints } from '../../utils/aiParser';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import {
-    Calendar, Clock, User, Building2, FileDown, Rocket, Check,
+    Calendar, Clock, User, Rocket, Check,
     AlertCircle, RefreshCw, Layers, Sparkles, Plus, MessageSquare,
-    Play, Download, MapPin, Trash2, Home, Share2, Save, X, ChevronRight, LayoutGrid, ArrowRight
+    Play, Download, MapPin, Trash2, Home, Share2, Save, X, ChevronRight, LayoutGrid, ArrowRight,
+    ChevronDown, FileJson, Sheet, PencilLine, Send,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
+import { downloadLectureSchedulePdf, downloadScheduleJson, downloadScheduleCsv } from '../../utils/timetableExport';
+import { logActivity } from '../../utils/activityLog';
+import { createReviewThread, addThreadMessage, getReviewThread, markCoordinatorCaughtUp } from '../../services/timetableReviews';
+import OptionalNoteToAdminsModal from '../../components/OptionalNoteToAdminsModal';
+
+const DAY_OPTS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 
 const LectureTimetable = () => {
     const { userData } = useOutletContext();
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
 
     // State for Fetching Real Data
     const [fetchedCourses, setFetchedCourses] = useState([]);
@@ -48,6 +53,13 @@ const LectureTimetable = () => {
     const [selectionLevelFilter, setSelectionLevelFilter] = useState('All');
     const [venueFilter, setVenueFilter] = useState('All'); // 'All', 'Department', 'General'
 
+    const [editingSavedId, setEditingSavedId] = useState(null);
+    const [scheduleEditMode, setScheduleEditMode] = useState(false);
+    const [exportMenuOpen, setExportMenuOpen] = useState(false);
+    const [savingEdits, setSavingEdits] = useState(false);
+    const [sendingReview, setSendingReview] = useState(false);
+    const [adminNoteModalOpen, setAdminNoteModalOpen] = useState(false);
+
     // New State for Enhanced Workflow
     const [setupStep, setSetupStep] = useState(1); // 1: Session, 2: Config
     const [selectedSemester, setSelectedSemester] = useState('First');
@@ -72,6 +84,77 @@ const LectureTimetable = () => {
         return () => unsubscribe();
     }, [userData]);
 
+    const editIdParam = searchParams.get('edit');
+    useEffect(() => {
+        if (!editIdParam || !savedTimetables.length) return;
+        const t = savedTimetables.find((x) => x.id === editIdParam);
+        if (!t) return;
+        setGeneratedResult({ schedule: [...(t.schedule || [])], conflicts: t.conflicts || [] });
+        setEditingSavedId(t.id);
+        setStep(3);
+        setViewMode('generate');
+        setScheduleEditMode(true);
+        setSearchParams({}, { replace: true });
+    }, [editIdParam, savedTimetables, setSearchParams]);
+
+    const reviewThreadId = searchParams.get('reviewThread');
+    useEffect(() => {
+        if (!reviewThreadId || !userData?.uid) return undefined;
+        let cancelled = false;
+        (async () => {
+            try {
+                const t = await getReviewThread(reviewThreadId);
+                if (cancelled) return;
+                if (!t || t.coordinatorUid !== userData.uid) {
+                    if (t && t.coordinatorUid !== userData.uid) {
+                        alert('This review thread belongs to another coordinator.');
+                    }
+                    setSearchParams((p) => {
+                        p.delete('reviewThread');
+                        return p;
+                    }, { replace: true });
+                    return;
+                }
+                if ((t.kind || 'lecture') === 'exam') {
+                    navigate(`/coordinator/exam-timetable?reviewThread=${reviewThreadId}`, { replace: true });
+                    return;
+                }
+                const snap = t.snapshot || {};
+                const sched = Array.isArray(snap.schedule) ? snap.schedule : [];
+                setGeneratedResult({
+                    schedule: [...sched],
+                    conflicts: Array.isArray(snap.conflicts) ? [...snap.conflicts] : [],
+                });
+                setAddedConstraints(Array.isArray(snap.nlConstraints) ? snap.nlConstraints : []);
+                if (snap.semester === 'First' || snap.semester === 'Second') {
+                    setSelectedSemester(snap.semester);
+                }
+                if (Array.isArray(snap.courseSelectionIds) && snap.courseSelectionIds.length > 0) {
+                    setSelectedCourseIds(snap.courseSelectionIds);
+                }
+                setStep(3);
+                setViewMode('generate');
+                setScheduleEditMode(true);
+                setEditingSavedId(null);
+                markCoordinatorCaughtUp(reviewThreadId).catch(() => {});
+                setSearchParams((p) => {
+                    p.delete('reviewThread');
+                    return p;
+                }, { replace: true });
+            } catch (e) {
+                console.error(e);
+                alert('Could not load this review thread. Check Firestore rules and that you are signed in as the coordinator who submitted it.');
+                setSearchParams((p) => {
+                    p.delete('reviewThread');
+                    return p;
+                }, { replace: true });
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [reviewThreadId, userData?.uid, navigate, setSearchParams]);
+
     // Fetch Base Data on Mount
     useEffect(() => {
         const fetchData = async () => {
@@ -90,15 +173,15 @@ const LectureTimetable = () => {
 
                 // Filter by semester if selectedSemester is set (defaults to First)
                 const semesterCourses = courses.filter(c => !c.semester || c.semester === selectedSemester);
+                const schedulableCourses = semesterCourses.filter((c) => !c.excludeFromTimetable);
 
-
-                // 2. Fetch Relevant Venues (Department + General)
+                // 2. Fetch Relevant Venues (Department + General); omit maintenance halls
                 const venueDepts = [...new Set(['General', userData.department])];
                 const venuesQ = query(collection(db, 'venues'), where('dept', 'in', venueDepts));
                 const venuesSnap = await getDocs(venuesQ);
                 const venues = venuesSnap.docs
                     .map(doc => ({ id: doc.id, ...doc.data() }))
-                    .filter(v => v.status === 'available');
+                    .filter((v) => String(v.status || '').toLowerCase() !== 'maintenance');
 
                 // 3. Fetch Stored Constraints
                 const constraintsQ = query(collection(db, 'constraints'), where('department', '==', userData.department));
@@ -110,23 +193,26 @@ const LectureTimetable = () => {
                 const lecturersSnap = await getDocs(lecturersQ);
                 const lecturers = lecturersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-                // 5. Fetch Active Timetables from other departments (for clash checking)
-                const activeTimetablesQ = query(collection(db, 'saved_timetables'), where('isActive', '==', true));
-                const activeSnap = await getDocs(activeTimetablesQ);
-                const activeOthers = activeSnap.docs
-                    .map(doc => ({ id: doc.id, ...doc.data() }))
-                    .filter(t => t.department !== userData.department);
+                // 5. Other departments’ published/active timetables (venue & lecturer occupancy)
+                const allSavedSnap = await getDocs(collection(db, 'saved_timetables'));
+                const activeOthers = allSavedSnap.docs
+                    .map((d) => ({ id: d.id, ...d.data() }))
+                    .filter(
+                        (t) =>
+                            t.department !== userData.department &&
+                            (t.isActive === true || t.published === true)
+                    );
 
                 setCrossDeptTimetables(activeOthers);
 
-                setFetchedCourses(semesterCourses);
+                setFetchedCourses(schedulableCourses);
                 setFetchedVenues(venues);
                 setStoredConstraints(constraints);
                 setFetchedLecturers(lecturers);
 
                 // Initialize configs for fetched courses
                 const initialConfigs = {};
-                semesterCourses.forEach(c => {
+                schedulableCourses.forEach(c => {
                     initialConfigs[c.id] = {
                         lecturer: c.lecturer,
                         sections: c.sections || 1,
@@ -140,7 +226,7 @@ const LectureTimetable = () => {
                 });
                 setCourseConfigs(initialConfigs);
                 // Select all by default
-                setSelectedCourseIds(semesterCourses.map(c => c.id));
+                setSelectedCourseIds(schedulableCourses.map(c => c.id));
                 // Select all venues by default
                 setSelectedVenueIds(venues.map(v => v.id));
 
@@ -303,6 +389,8 @@ const LectureTimetable = () => {
             await new Promise(resolve => setTimeout(resolve, 500));
 
             setGeneratedResult(result);
+            setEditingSavedId(null);
+            setScheduleEditMode(false);
             setProgress(100);
             setStep(3);
         } catch (error) {
@@ -312,17 +400,98 @@ const LectureTimetable = () => {
         }
     };
 
+    const patchCourseRow = (course, patches) => {
+        setGeneratedResult((prev) => ({
+            ...prev,
+            schedule: prev.schedule.map((s) =>
+                s.code === course.code && s.assignedDay === course.assignedDay && s.assignedStart === course.assignedStart
+                    ? { ...s, ...patches }
+                    : s
+            ),
+        }));
+    };
+
+    const handleSendLectureToAdmins = () => {
+        const uid = auth.currentUser?.uid;
+        if (!uid || !userData?.department) {
+            alert('Sign in as a coordinator with a department to submit for review.');
+            return;
+        }
+        if (!generatedResult?.schedule?.length) {
+            alert('Generate or load a timetable first.');
+            return;
+        }
+        setAdminNoteModalOpen(true);
+    };
+
+    const submitLectureReviewWithNote = async (noteRaw) => {
+        const uid = auth.currentUser?.uid;
+        if (!uid || !userData?.department) return;
+
+        setSendingReview(true);
+        try {
+            const threadId = await createReviewThread({
+                coordinatorUid: uid,
+                coordinatorName: userData?.name || '',
+                coordinatorEmail: userData?.email || '',
+                department: userData.department,
+                kind: 'lecture',
+                title: `${userData.department} · ${selectedSemester} Semester · Lecture draft`,
+                snapshot: {
+                    schedule: generatedResult.schedule,
+                    conflicts: generatedResult.conflicts || [],
+                    semester: selectedSemester,
+                    nlConstraints: addedConstraints,
+                    courseSelectionIds: selectedCourseIds,
+                },
+            });
+            const body =
+                (noteRaw || '').trim() ||
+                'Submitted lecture timetable draft for your review. Please check for venue, lecturer, and cross-department clashes.';
+            await addThreadMessage(threadId, {
+                senderRole: 'coordinator',
+                senderUid: uid,
+                senderName: userData?.name || '',
+                body,
+            });
+            setAdminNoteModalOpen(false);
+            alert('Sent to admins. Use Admin feedback in the sidebar to read replies and adjust if needed.');
+        } catch (e) {
+            console.error(e);
+            alert('Could not send to admins. Check your connection and Firestore security rules for timetable_review_threads.');
+        } finally {
+            setSendingReview(false);
+        }
+    };
+
     const handleSaveTimetable = async () => {
         if (!newTimetableName.trim()) return;
         setIsSaving(true);
         try {
-            await addDoc(collection(db, 'saved_timetables'), {
-                name: newTimetableName,
+            const ref = await addDoc(collection(db, 'saved_timetables'), {
+                name: newTimetableName.trim(),
                 department: userData.department,
                 schedule: generatedResult.schedule,
-                conflicts: generatedResult.conflicts,
+                conflicts: generatedResult.conflicts || [],
+                coordinatorUid: auth.currentUser?.uid || null,
+                coordinatorName: userData?.name || '',
+                type: 'lecture',
                 createdAt: new Date().toISOString(),
-                isActive: false
+                updatedAt: new Date().toISOString(),
+                isActive: false,
+                published: false,
+                status: 'draft',
+            });
+            await logActivity(db, {
+                uid: auth.currentUser?.uid,
+                userName: userData?.name,
+                userRole: 'coordinator',
+                department: userData?.department,
+                action: 'lecture_timetable_saved',
+                targetType: 'saved_timetables',
+                targetId: ref.id,
+                path: '/coordinator/lecture-timetable',
+                meta: { name: newTimetableName.trim() },
             });
             setSaveModalOpen(false);
             setNewTimetableName('');
@@ -367,78 +536,68 @@ const LectureTimetable = () => {
         }
     };
 
-    const handleDownloadPDF = async (level = 'All') => {
-        const element = level === 'All'
-            ? document.getElementById('timetable-container')
-            : document.querySelector(`[data-level="${level}"]`);
-
-        if (!element) {
-            alert("Timetable element not found for export.");
-            return;
-        }
-
+    const handleTogglePublish = async (t) => {
+        const next = !t.published;
         try {
-            // Add a temporary class to force background visibility and hide non-exportable items
-            element.classList.add('pdf-export-mode');
-
-            const canvas = await html2canvas(element, {
-                scale: 3, // Higher scale for better quality
-                useCORS: true,
-                logging: false,
-                backgroundColor: '#ffffff',
-                onclone: (clonedDoc) => {
-                    const clonedElement = clonedDoc.querySelector(`[data-level="${level}"]`) || clonedDoc.getElementById('timetable-container');
-                    if (!clonedElement) return;
-
-                    // Hide non-print items
-                    clonedDoc.querySelectorAll('.no-print').forEach(el => el.style.display = 'none');
-
-                    // RECURSIVE STYLE SANITIZER:
-                    // Force all color-related styles to RGB to avoid html2canvas failing on oklch/oklab
-                    const sanitizeStyles = (el) => {
-                        const style = window.getComputedStyle(el);
-
-                        // Properties to sanitize
-                        ['color', 'backgroundColor', 'borderColor', 'outlineColor', 'fill', 'stroke'].forEach(prop => {
-                            const val = el.style[prop] || style[prop];
-                            if (val && (val.includes('oklch') || val.includes('oklab'))) {
-                                // If the browser supports it, getComputedStyle usually returns rgb()
-                                // but if html2canvas is hitting the raw value, we force it here.
-                                // We use a dummy div to let the browser convert oklch/oklab to rgb for us
-                                try {
-                                    const dummy = document.createElement('div');
-                                    dummy.style.color = val;
-                                    document.body.appendChild(dummy);
-                                    const rgbVal = window.getComputedStyle(dummy).color;
-                                    document.body.removeChild(dummy);
-                                    el.style[prop] = rgbVal;
-                                } catch (e) {
-                                    el.style[prop] = '#000000'; // Final fallback
-                                }
-                            }
-                        });
-
-                        // Recurse
-                        Array.from(el.children).forEach(sanitizeStyles);
-                    };
-
-                    sanitizeStyles(clonedElement);
-                }
+            await updateDoc(doc(db, 'saved_timetables', t.id), {
+                published: next,
+                status: next ? 'published' : 'draft',
+                publishedAt: next ? new Date().toISOString() : '',
+                updatedAt: new Date().toISOString(),
             });
-
-            element.classList.remove('pdf-export-mode');
-
-            const imgData = canvas.toDataURL('image/png');
-            const pdf = new jsPDF('p', 'mm', 'a4');
-            const pdfWidth = pdf.internal.pageSize.getWidth();
-            const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-
-            pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
-            pdf.save(`Nile-Timetable-${level}-${userData.department}-${new Date().toLocaleDateString().replace(/\//g, '-')}.pdf`);
+            await logActivity(db, {
+                uid: auth.currentUser?.uid,
+                userName: userData?.name,
+                userRole: 'coordinator',
+                department: userData?.department,
+                action: next ? 'lecture_timetable_published' : 'lecture_timetable_unpublished',
+                targetType: 'saved_timetables',
+                targetId: t.id,
+                meta: { name: t.name },
+            });
+            alert(next ? 'Published — faculty admin can review it in the catalogue.' : 'Publication withdrawn (draft again).');
         } catch (error) {
-            console.error("PDF Export failed:", error);
-            alert("Failed to generate PDF. Check console for details.");
+            console.error(error);
+            alert('Could not update publish state.');
         }
+    };
+
+    const handleSaveEditedTimetable = async () => {
+        if (!editingSavedId) return;
+        setSavingEdits(true);
+        try {
+            await updateDoc(doc(db, 'saved_timetables', editingSavedId), {
+                schedule: generatedResult.schedule,
+                conflicts: generatedResult.conflicts || [],
+                updatedAt: new Date().toISOString(),
+            });
+            await logActivity(db, {
+                uid: auth.currentUser?.uid,
+                userName: userData?.name,
+                userRole: 'coordinator',
+                department: userData?.department,
+                action: 'lecture_timetable_edited',
+                targetType: 'saved_timetables',
+                targetId: editingSavedId,
+            });
+            setScheduleEditMode(false);
+            setEditingSavedId(null);
+            alert('Saved your edits to this version.');
+        } catch (error) {
+            console.error(error);
+            alert('Could not save edits.');
+        } finally {
+            setSavingEdits(false);
+        }
+    };
+
+    const handleDownloadPDF = (level = 'All') => {
+        setExportMenuOpen(false);
+        void downloadLectureSchedulePdf(generatedResult.schedule, {
+            department: userData?.department,
+            level,
+            filePrefix: 'Nile-Lecture-Timetable',
+        });
     };
 
     const handleShareWhatsApp = (level = 'All') => {
@@ -452,6 +611,8 @@ const LectureTimetable = () => {
         acc[lvl]++;
         return acc;
     }, {});
+
+    const canEditSlots = !!(scheduleEditMode && editingSavedId);
 
     return (
         <div className="space-y-8 animate-in fade-in duration-700 pb-20">
@@ -497,7 +658,7 @@ const LectureTimetable = () => {
 
                                     <CardHeader className="pb-4 relative z-10">
                                         <CardTitle className="text-xl font-black text-slate-800 tracking-tight leading-tight pr-6">{t.name}</CardTitle>
-                                        <div className="flex items-center gap-3 mt-3">
+                                        <div className="flex items-center gap-3 mt-3 flex-wrap">
                                             <div className="flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-widest text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
                                                 <Calendar size={10} />
                                                 {new Date(t.createdAt).toLocaleDateString()}
@@ -506,6 +667,11 @@ const LectureTimetable = () => {
                                                 <Layers size={10} />
                                                 {t.schedule?.length || 0} Slots
                                             </div>
+                                            {t.published && (
+                                                <div className="flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-widest text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200">
+                                                    <Send size={10} /> Published
+                                                </div>
+                                            )}
                                         </div>
                                     </CardHeader>
 
@@ -515,6 +681,8 @@ const LectureTimetable = () => {
                                                 className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs h-10 rounded-xl shadow-lg shadow-slate-900/10 transition-all active:scale-95"
                                                 onClick={() => {
                                                     setGeneratedResult({ schedule: t.schedule, conflicts: t.conflicts || [] });
+                                                    setEditingSavedId(null);
+                                                    setScheduleEditMode(false);
                                                     setStep(3);
                                                     setViewMode('generate');
                                                 }}
@@ -527,6 +695,23 @@ const LectureTimetable = () => {
                                                 onClick={() => handleSetActive(t)}
                                             >
                                                 <Home size={14} className="mr-2" /> {t.isActive ? 'Active' : 'Set Active'}
+                                            </Button>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <Button
+                                                variant="outline"
+                                                className="font-bold text-xs h-10 rounded-xl border-slate-200"
+                                                onClick={() => navigate(`/coordinator/lecture-timetable?edit=${t.id}`)}
+                                            >
+                                                <PencilLine size={14} className="mr-2" /> Edit
+                                            </Button>
+                                            <Button
+                                                variant={t.published ? 'outline' : 'default'}
+                                                className={`font-bold text-xs h-10 rounded-xl ${t.published ? 'border-amber-200 text-amber-800 hover:bg-amber-50' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
+                                                onClick={() => handleTogglePublish(t)}
+                                            >
+                                                <Send size={14} className="mr-2" /> {t.published ? 'Unpublish' : 'Publish'}
                                             </Button>
                                         </div>
 
@@ -545,11 +730,22 @@ const LectureTimetable = () => {
                                                 )}
                                             </Button>
                                             <div className="flex gap-2">
-                                                <Button variant="outline" size="icon" className="h-8 w-8 rounded-full border-slate-200 text-slate-400 hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 transition-all" onClick={() => {
-                                                    setGeneratedResult({ schedule: t.schedule, conflicts: t.conflicts || [] });
-                                                    handleDownloadPDF();
-                                                }}>
+                                                <Button variant="outline" size="icon" className="h-8 w-8 rounded-full border-slate-200 text-slate-400 hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 transition-all" title="Download PDF"
+                                                    onClick={() => void downloadLectureSchedulePdf(t.schedule || [], {
+                                                        department: userData?.department,
+                                                        level: 'All',
+                                                        filePrefix: `Lecture-${(t.name || 'export').replace(/\s+/g, '-').slice(0, 48)}`,
+                                                        subtitle: t.name || userData?.department,
+                                                    })}>
                                                     <Download size={14} />
+                                                </Button>
+                                                <Button variant="outline" size="icon" className="h-8 w-8 rounded-full border-slate-200 text-slate-400 hover:text-sky-600 hover:border-sky-200 hover:bg-sky-50 transition-all" title="JSON"
+                                                    onClick={() => downloadScheduleJson(t.schedule || [], { department: userData?.department, name: `${(t.name || 'timetable').replace(/\s+/g, '-')}` })}>
+                                                    <FileJson size={14} />
+                                                </Button>
+                                                <Button variant="outline" size="icon" className="h-8 w-8 rounded-full border-slate-200 text-slate-400 hover:text-teal-600 hover:border-teal-200 hover:bg-teal-50 transition-all" title="CSV"
+                                                    onClick={() => downloadScheduleCsv(t.schedule || [], { department: userData?.department, name: `${(t.name || 'timetable').replace(/\s+/g, '-')}` })}>
+                                                    <Sheet size={14} />
                                                 </Button>
                                                 <Button variant="outline" size="icon" className="h-8 w-8 rounded-full border-slate-200 text-slate-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-all" onClick={() => handleShareWhatsApp()}>
                                                     <Share2 size={14} />
@@ -1005,16 +1201,52 @@ const LectureTimetable = () => {
                     {step === 3 && (
                         <div className="space-y-12 max-w-full mx-auto pb-20" id="timetable-container">
 
-                            <div className="flex justify-between items-end border-b border-slate-200 pb-6">
+                            {canEditSlots && (
+                                <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-6 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4 shadow-sm">
+                                    <div>
+                                        <p className="text-sm font-black text-amber-900 uppercase tracking-widest">Editing saved version</p>
+                                        <p className="text-xs text-amber-800/80 mt-1">Adjust slots in the table below, then save to update this version.</p>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        <Button type="button" variant="outline" className="border-amber-300 text-amber-900 font-bold bg-white" disabled={savingEdits} onClick={() => { setEditingSavedId(null); setScheduleEditMode(false); }}>Close editor</Button>
+                                        <Button type="button" className="bg-amber-700 hover:bg-amber-800 text-white font-bold" disabled={savingEdits} onClick={handleSaveEditedTimetable}>{savingEdits ? 'Saving…' : 'Save edits'}</Button>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex flex-col lg:flex-row lg:justify-between lg:items-end gap-4 border-b border-slate-200 pb-6">
                                 <div>
                                     <h2 className="text-4xl font-black text-slate-900 tracking-tight">Generated Timetable</h2>
-                                    <p className="text-slate-500 font-medium mt-1">Review the schedule below before saving.</p>
+                                    <p className="text-slate-500 font-medium mt-1">Review, export to your device, save, or publish.</p>
                                 </div>
-                                <div className="flex gap-3">
-                                    <Button variant="outline" className="font-bold border-slate-200 text-slate-600 hover:bg-slate-50" onClick={() => setStep(1)}>
+                                <div className="flex flex-wrap gap-2 items-center justify-end">
+                                    <div className="relative" onMouseDown={(e) => e.stopPropagation()}>
+                                        <Button variant="outline" className="font-bold border-slate-200" type="button" onClick={() => setExportMenuOpen((o) => !o)}>
+                                            <Download size={16} className="mr-2" /> Export <ChevronDown size={14} className="ml-2" />
+                                        </Button>
+                                        {exportMenuOpen && (
+                                            <div className="absolute right-0 top-full mt-2 w-56 rounded-xl border border-slate-200 bg-white shadow-2xl z-50 py-2" onMouseDown={(e) => e.stopPropagation()}>
+                                                <button type="button" className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-50" onClick={() => handleDownloadPDF('All')}>PDF — full schedule</button>
+                                                <button type="button" className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-50 flex items-center gap-2" onClick={() => { setExportMenuOpen(false); downloadScheduleJson(generatedResult.schedule, { department: userData?.department, name: 'lecture-timetable' }); }}><FileJson size={14} /> JSON download</button>
+                                                <button type="button" className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-50 flex items-center gap-2" onClick={() => { setExportMenuOpen(false); downloadScheduleCsv(generatedResult.schedule, { department: userData?.department, name: 'lecture-timetable' }); }}><Sheet size={14} /> CSV download</button>
+                                                <button type="button" className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-emerald-50 text-emerald-900 flex items-center gap-2 border-t border-slate-100" onClick={() => { setExportMenuOpen(false); void handleSendLectureToAdmins(); }} disabled={sendingReview}><MessageSquare size={14} /> Send to admins for review</button>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="font-bold border-emerald-200 text-emerald-800 hover:bg-emerald-50"
+                                        disabled={sendingReview}
+                                        onClick={() => void handleSendLectureToAdmins()}
+                                    >
+                                        {sendingReview ? <RefreshCw size={16} className="mr-2 animate-spin" /> : <MessageSquare size={16} className="mr-2" />}
+                                        Send to admins
+                                    </Button>
+                                    <Button variant="outline" className="font-bold border-slate-200 text-slate-600 hover:bg-slate-50" type="button" onClick={() => { setStep(1); setEditingSavedId(null); setScheduleEditMode(false); }}>
                                         <RefreshCw size={16} className="mr-2" /> Regenerate
                                     </Button>
-                                    <Button className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-200" onClick={() => setSaveModalOpen(true)}>
+                                    <Button className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-200" type="button" onClick={() => setSaveModalOpen(true)}>
                                         <Save size={16} className="mr-2" /> Save Timetable
                                     </Button>
                                 </div>
@@ -1081,44 +1313,75 @@ const LectureTimetable = () => {
                                                                 })
                                                                 .map((course, idx) => (
                                                                     <tr key={`${course.id}-${idx}`} className="hover:bg-indigo-50/20 transition-colors group">
-                                                                        <td className="px-8 py-5 font-black text-slate-900 border-r border-slate-100 bg-slate-50/50">{course.code}</td>
-                                                                        <td className="px-8 py-5 font-bold text-slate-700 border-r border-slate-100 max-w-md leading-relaxed">
-                                                                            {course.title}
-                                                                        </td>
-                                                                        <td className="px-8 py-5 text-center font-black text-indigo-600 border-r border-slate-100 whitespace-nowrap bg-indigo-50/10">
-                                                                            {formatTimeRange(course.assignedStart, course.duration)}
-                                                                        </td>
-                                                                        <td className="px-8 py-5 text-center border-r border-slate-100">
-                                                                            <div className={`inline-block px-4 py-1.5 rounded-lg text-white font-black text-[10px] uppercase shadow-md ${course.assignedDay === 'Monday' ? 'bg-emerald-500 shadow-emerald-200' :
-                                                                                course.assignedDay === 'Tuesday' ? 'bg-sky-500 shadow-sky-200' :
-                                                                                    course.assignedDay === 'Wednesday' ? 'bg-yellow-400 text-yellow-950 shadow-yellow-100' :
-                                                                                        course.assignedDay === 'Thursday' ? 'bg-orange-500 shadow-orange-200' :
-                                                                                            course.assignedDay === 'Friday' ? 'bg-amber-500 shadow-amber-200' :
-                                                                                                'bg-slate-500 shadow-slate-200'
-                                                                                }`}>
-                                                                                {course.assignedDay}
-                                                                            </div>
-                                                                        </td>
-                                                                        <td className="px-8 py-5 font-bold text-slate-500 border-r border-slate-100">
-                                                                            <div className="flex items-center gap-2 flex-wrap">
-                                                                                <MapPin size={14} className="text-slate-300 shrink-0" />
-                                                                                <span>{course.assignedVenue?.name}</span>
-                                                                                {(course.courseType === 'Online' || String(course.assignedVenue?.type || '').toLowerCase() === 'virtual') && (
-                                                                                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-violet-100 text-violet-800 border border-violet-200">
-                                                                                        Online
-                                                                                    </span>
-                                                                                )}
-                                                                            </div>
-                                                                        </td>
-                                                                        <td className="px-8 py-5 font-bold text-slate-500 border-r border-slate-100">
-                                                                            <div className="flex items-center gap-2">
-                                                                                <User size={14} className="text-slate-300" />
-                                                                                {course.lecturer || 'TBA'}
-                                                                            </div>
-                                                                        </td>
-                                                                        <td className="px-8 py-5 text-center font-black text-slate-700 bg-slate-50/30">
-                                                                            {course.duration}
-                                                                        </td>
+                                                                        {canEditSlots ? (
+                                                                            <>
+                                                                                <td className="px-5 py-4 font-black text-slate-900 border-r border-slate-100 bg-slate-50/50 text-xs">{course.code}</td>
+                                                                                <td className="px-5 py-4 border-r border-slate-100 max-w-xs">
+                                                                                    <input className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-bold" value={course.title || ''} onChange={(e) => patchCourseRow(course, { title: e.target.value })} />
+                                                                                </td>
+                                                                                <td className="px-5 py-4 border-r border-slate-100 text-center">
+                                                                                    <div className="flex flex-col gap-1 items-center">
+                                                                                        <input type="number" min={7} max={20} className="w-14 rounded border border-slate-200 px-1 py-1 text-center text-xs font-black" value={course.assignedStart ?? ''} onChange={(e) => patchCourseRow(course, { assignedStart: parseInt(e.target.value, 10) || 0 })} />
+                                                                                        <select className="rounded border border-slate-200 px-1 py-0.5 text-[10px] font-bold" value={course.duration || '2h'} onChange={(e) => patchCourseRow(course, { duration: e.target.value })}>
+                                                                                            {['1h', '2h', '3h'].map((d) => <option key={d} value={d}>{d}</option>)}
+                                                                                        </select>
+                                                                                    </div>
+                                                                                </td>
+                                                                                <td className="px-5 py-4 border-r border-slate-100 text-center">
+                                                                                    <select className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-bold" value={course.assignedDay || 'Monday'} onChange={(e) => patchCourseRow(course, { assignedDay: e.target.value })}>
+                                                                                        {DAY_OPTS.map((d) => <option key={d} value={d}>{d}</option>)}
+                                                                                    </select>
+                                                                                </td>
+                                                                                <td className="px-5 py-4 border-r border-slate-100">
+                                                                                    <input className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-bold" value={course.assignedVenue?.name || ''} onChange={(e) => patchCourseRow(course, { assignedVenue: { ...(course.assignedVenue || {}), name: e.target.value } })} />
+                                                                                </td>
+                                                                                <td className="px-5 py-4 border-r border-slate-100">
+                                                                                    <input className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-bold" value={course.lecturer || ''} onChange={(e) => patchCourseRow(course, { lecturer: e.target.value })} />
+                                                                                </td>
+                                                                                <td className="px-5 py-4 text-center text-xs font-black text-slate-600 bg-slate-50/30">{course.duration}</td>
+                                                                            </>
+                                                                        ) : (
+                                                                            <>
+                                                                                <td className="px-8 py-5 font-black text-slate-900 border-r border-slate-100 bg-slate-50/50">{course.code}</td>
+                                                                                <td className="px-8 py-5 font-bold text-slate-700 border-r border-slate-100 max-w-md leading-relaxed">
+                                                                                    {course.title}
+                                                                                </td>
+                                                                                <td className="px-8 py-5 text-center font-black text-indigo-600 border-r border-slate-100 whitespace-nowrap bg-indigo-50/10">
+                                                                                    {formatTimeRange(course.assignedStart, course.duration)}
+                                                                                </td>
+                                                                                <td className="px-8 py-5 text-center border-r border-slate-100">
+                                                                                    <div className={`inline-block px-4 py-1.5 rounded-lg text-white font-black text-[10px] uppercase shadow-md ${course.assignedDay === 'Monday' ? 'bg-emerald-500 shadow-emerald-200' :
+                                                                                        course.assignedDay === 'Tuesday' ? 'bg-sky-500 shadow-sky-200' :
+                                                                                            course.assignedDay === 'Wednesday' ? 'bg-yellow-400 text-yellow-950 shadow-yellow-100' :
+                                                                                                course.assignedDay === 'Thursday' ? 'bg-orange-500 shadow-orange-200' :
+                                                                                                    course.assignedDay === 'Friday' ? 'bg-amber-500 shadow-amber-200' :
+                                                                                                        'bg-slate-500 shadow-slate-200'
+                                                                                        }`}>
+                                                                                        {course.assignedDay}
+                                                                                    </div>
+                                                                                </td>
+                                                                                <td className="px-8 py-5 font-bold text-slate-500 border-r border-slate-100">
+                                                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                                                        <MapPin size={14} className="text-slate-300 shrink-0" />
+                                                                                        <span>{course.assignedVenue?.name}</span>
+                                                                                        {(course.courseType === 'Online' || String(course.assignedVenue?.type || '').toLowerCase() === 'virtual') && (
+                                                                                            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-violet-100 text-violet-800 border border-violet-200">
+                                                                                                Online
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </td>
+                                                                                <td className="px-8 py-5 font-bold text-slate-500 border-r border-slate-100">
+                                                                                    <div className="flex items-center gap-2">
+                                                                                        <User size={14} className="text-slate-300" />
+                                                                                        {course.lecturer || 'TBA'}
+                                                                                    </div>
+                                                                                </td>
+                                                                                <td className="px-8 py-5 text-center font-black text-slate-700 bg-slate-50/30">
+                                                                                    {course.duration}
+                                                                                </td>
+                                                                            </>
+                                                                        )}
                                                                     </tr>
                                                                 ))}
                                                         </tbody>
@@ -1165,6 +1428,17 @@ const LectureTimetable = () => {
                 </div>
             )
             }
+
+            <OptionalNoteToAdminsModal
+                open={adminNoteModalOpen}
+                onClose={() => {
+                    if (!sendingReview) setAdminNoteModalOpen(false);
+                }}
+                onSend={(note) => void submitLectureReviewWithNote(note)}
+                pending={sendingReview}
+                title="Send lecture draft to administrators"
+                description="Optional note attached to this review thread. Coordinators can clarify context, risks, or requested checks for the admin team."
+            />
 
             {/* Save Modal */}
             {

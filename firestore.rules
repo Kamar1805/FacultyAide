@@ -1,0 +1,129 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function userExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return signedIn() && userExists() && userDoc().role == 'admin';
+    }
+
+    function isCoordinator() {
+      return signedIn() && userExists() && userDoc().role == 'coordinator';
+    }
+
+    function coordinatorDept() {
+      return userDoc().department;
+    }
+
+    function threadData(threadId) {
+      return get(/databases/$(database)/documents/timetable_review_threads/$(threadId)).data;
+    }
+
+    // --- Users (auth profile; admin lists coordinators only) ---
+    match /users/{userId} {
+      allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if signedIn() && isAdmin() && resource.data.role == 'coordinator';
+      allow create: if signedIn() && (
+          request.auth.uid == userId ||
+          (isAdmin() && request.resource.data.role == 'coordinator')
+      );
+      allow update: if signedIn() && (
+        (request.auth.uid == userId &&
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.accessStatus == resource.data.accessStatus) ||
+        isAdmin()
+      );
+      allow delete: if false;
+    }
+
+    // --- Core catalogue (FcomBot & coordinators read-all; admin edits) ---
+    match /courses/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /lecturers/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /venues/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // --- Department timetables ---
+    match /saved_timetables/{docId} {
+      allow read: if signedIn();
+      allow create: if isCoordinator() &&
+        request.resource.data.department == coordinatorDept() &&
+        request.resource.data.coordinatorUid == request.auth.uid;
+      allow update: if isCoordinator() && resource.data.department == coordinatorDept();
+      allow delete: if isCoordinator() && resource.data.department == coordinatorDept();
+    }
+
+    match /exam_timetables/{docId} {
+      allow read: if signedIn();
+      allow create: if isCoordinator() &&
+        request.resource.data.department == coordinatorDept();
+    }
+
+    // --- Natural-language / dept constraints ---
+    match /constraints/{docId} {
+      allow read: if signedIn() && (
+        (isCoordinator() && resource.data.department == coordinatorDept()) ||
+        isAdmin()
+      );
+      allow create: if isCoordinator() &&
+        request.resource.data.department == coordinatorDept();
+      allow delete: if isCoordinator() && resource.data.department == coordinatorDept();
+      allow update: if false;
+    }
+
+    // --- Activity feed ---
+    match /activity_logs/{docId} {
+      allow create: if signedIn();
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // --- Coordinator ↔ admin review threads ---
+    match /timetable_review_threads/{threadId} {
+      allow read: if signedIn() &&
+        (resource.data.coordinatorUid == request.auth.uid || isAdmin());
+      allow create: if signedIn() &&
+        request.resource.data.coordinatorUid == request.auth.uid &&
+        request.resource.data.keys().hasAll(['kind', 'title', 'coordinatorUid']);
+      allow update: if signedIn() &&
+        (resource.data.coordinatorUid == request.auth.uid || isAdmin());
+
+      match /messages/{messageId} {
+        allow read: if signedIn() &&
+          (threadData(threadId).coordinatorUid == request.auth.uid || isAdmin());
+        allow create: if signedIn() &&
+          request.resource.data.keys().hasAll(['senderRole', 'body']) &&
+          (
+            (request.resource.data.senderRole == 'coordinator' &&
+              threadData(threadId).coordinatorUid == request.auth.uid) ||
+            (request.resource.data.senderRole == 'admin' && isAdmin())
+          );
+        allow update, delete: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

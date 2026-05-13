@@ -1,11 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
-import { Building2, Users, BookOpen, Activity, ArrowRight, ShieldCheck, School } from 'lucide-react';
+import { Building2, Users, BookOpen, Activity, ArrowRight, ShieldCheck, School, Calendar, Radio } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase';
-import { collection, getCountFromServer } from 'firebase/firestore';
+import { collection, getCountFromServer, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { motion } from 'framer-motion';
+
+function formatWhen(val) {
+    if (val == null || val === '') return '—';
+    if (typeof val?.toDate === 'function') {
+        try {
+            const d = val.toDate();
+            return d?.toLocaleString?.() ?? '—';
+        } catch {
+            return '—';
+        }
+    }
+    const d = new Date(val);
+    return Number.isNaN(d.getTime()) ? String(val).slice(0, 24) : d.toLocaleString();
+}
 
 const DashboardOverview = () => {
     const navigate = useNavigate();
@@ -14,6 +28,11 @@ const DashboardOverview = () => {
         lecturers: 0,
         courses: 0
     });
+    const [publishedLectures, setPublishedLectures] = useState([]);
+    const [publishedExams, setPublishedExams] = useState([]);
+    const [activityRows, setActivityRows] = useState([]);
+    const [coordinators, setCoordinators] = useState([]);
+    const [feedLoading, setFeedLoading] = useState(true);
 
     useEffect(() => {
         const fetchStats = async () => {
@@ -32,6 +51,58 @@ const DashboardOverview = () => {
             }
         };
         fetchStats();
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadFeed = async () => {
+            setFeedLoading(true);
+            try {
+                const lectureSnap = await getDocs(collection(db, 'saved_timetables'));
+                const examSnap = await getDocs(collection(db, 'exam_timetables'));
+                let logs = [];
+                try {
+                    const logsQ = query(collection(db, 'activity_logs'), orderBy('createdAt', 'desc'), limit(50));
+                    const logSnap = await getDocs(logsQ);
+                    logs = logSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+                } catch {
+                    const logSnap = await getDocs(collection(db, 'activity_logs'));
+                    logs = logSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).slice(0, 50);
+                }
+                const coordSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'coordinator')));
+
+                const lect = lectureSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+                    .filter((t) => t.published === true)
+                    .sort((a, b) => String(b.publishedAt || b.updatedAt || '').localeCompare(String(a.publishedAt || a.updatedAt || '')))
+                    .slice(0, 15);
+
+                const exams = examSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+                    .filter((t) => t.published === true || !!t.publishedAt)
+                    .sort((a, b) => String(b.publishedAt || '').localeCompare(String(a.publishedAt || '')))
+                    .slice(0, 10);
+
+                const coordList = coordSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+                    .sort((a, b) => String(b.lastActiveAt || '').localeCompare(String(a.lastActiveAt || '')));
+
+                if (!cancelled) {
+                    setPublishedLectures(lect);
+                    setPublishedExams(exams);
+                    setActivityRows(logs);
+                    setCoordinators(coordList);
+                }
+            } catch (e) {
+                console.error('Admin feed load:', e);
+                if (!cancelled) {
+                    setPublishedLectures([]);
+                    setPublishedExams([]);
+                    setActivityRows([]);
+                }
+            } finally {
+                if (!cancelled) setFeedLoading(false);
+            }
+        };
+        loadFeed();
+        return () => { cancelled = true; };
     }, []);
 
     const QuickAction = ({ title, desc, icon: Icon, onClick, color }) => (
@@ -136,13 +207,153 @@ const DashboardOverview = () => {
                     />
                     <QuickAction
                         title="Security Audit"
-                        desc="System logs & permissions"
+                        desc="Activity log & admin settings"
                         icon={ShieldCheck}
                         color="bg-slate-100 text-slate-700"
-                        onClick={() => { }}
+                        onClick={() => navigate('/admin/settings')}
                     />
                 </div>
             </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <Card className="border-slate-200 shadow-sm overflow-hidden" id="admin-published-timetables">
+                    <CardHeader className="bg-slate-50 border-b border-slate-100">
+                        <CardTitle className="text-lg flex items-center gap-2">
+                            <Calendar size={20} className="text-indigo-600" /> Recently published timetables
+                        </CardTitle>
+                        <CardDescription>Live lecture &amp; exam releases from coordinators (requires `published` flags).</CardDescription>
+                    </CardHeader>
+                    <CardContent className="p-0 max-h-[340px] overflow-y-auto">
+                        {feedLoading ? (
+                            <div className="p-8 text-center text-slate-400 font-bold text-sm">Loading catalogue…</div>
+                        ) : (
+                            <table className="w-full text-left text-sm">
+                                <thead className="bg-white border-b sticky top-0 z-10">
+                                    <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                        <th className="px-4 py-3">Type</th>
+                                        <th className="px-4 py-3">Dept / title</th>
+                                        <th className="px-4 py-3">Coordinator</th>
+                                        <th className="px-4 py-3">When</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {[
+                                        ...publishedLectures.map((t) => ({
+                                            kind: 'Lecture',
+                                            title: t.name || 'Untitled',
+                                            dept: t.department,
+                                            who: t.coordinatorName || '—',
+                                            when: t.publishedAt || t.updatedAt || t.createdAt,
+                                        })),
+                                        ...publishedExams.map((t) => ({
+                                            kind: 'Exam',
+                                            title: t.name || 'Exam timetable',
+                                            dept: t.department,
+                                            who: t.coordinatorName || '—',
+                                            when: t.publishedAt || t.createdAt?.toDate?.()?.toISOString?.() || t.createdAt,
+                                        })),
+                                    ]
+                                        .sort((a, b) => String(b.when || '').localeCompare(String(a.when || '')))
+                                        .slice(0, 16)
+                                        .map((row, i) => (
+                                            <tr key={`${row.kind}-${i}`} className="hover:bg-slate-50/80">
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-full ${row.kind === 'Exam' ? 'bg-violet-100 text-violet-800' : 'bg-emerald-100 text-emerald-900'}`}>{row.kind}</span>
+                                                </td>
+                                                <td className="px-4 py-3 font-bold text-slate-800">{row.title}</td>
+                                                <td className="px-4 py-3 text-slate-600 text-xs">{row.dept}<div className="text-[11px] text-slate-400 font-medium">{row.who}</div></td>
+                                                <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{formatWhen(row.when)}</td>
+                                            </tr>
+                                        ))}
+                                    {publishedLectures.length === 0 && publishedExams.length === 0 && (
+                                        <tr>
+                                            <td colSpan={4} className="px-6 py-10 text-center text-slate-400 text-sm">No publications yet — coordinators publish from lecture or exam workspaces.</td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        )}
+                    </CardContent>
+                </Card>
+
+                <Card className="border-slate-200 shadow-sm overflow-hidden" id="admin-activity-feed">
+                    <CardHeader className="bg-slate-50 border-b border-slate-100">
+                        <CardTitle className="text-lg flex items-center gap-2">
+                            <Radio size={20} className="text-amber-500" /> Coordinator activity
+                        </CardTitle>
+                        <CardDescription>Latest actions across publishing, saves, and profile updates.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="p-0 max-h-[340px] overflow-y-auto">
+                        {feedLoading ? (
+                            <div className="p-8 text-center text-slate-400 font-bold text-sm">Hydrating audits…</div>
+                        ) : (
+                            <table className="w-full text-left text-sm">
+                                <thead className="bg-white border-b sticky top-0">
+                                    <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                        <th className="px-4 py-3">User</th>
+                                        <th className="px-4 py-3">Action</th>
+                                        <th className="px-4 py-3">Detail</th>
+                                        <th className="px-4 py-3">Time</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {activityRows.map((row) => (
+                                        <tr key={row.id} className="hover:bg-slate-50/80">
+                                            <td className="px-4 py-3 font-bold text-slate-800 text-xs">{row.userName || '—'}<div className="text-[10px] text-slate-400">{row.userRole}</div></td>
+                                            <td className="px-4 py-3 text-[11px] font-black uppercase text-indigo-600">{String(row.action || '').replace(/_/g, ' ')}</td>
+                                            <td className="px-4 py-3 text-xs text-slate-500">{row.meta?.name || row.meta?.semester || row.department || '—'}</td>
+                                            <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{formatWhen(row.createdAt)}</td>
+                                        </tr>
+                                    ))}
+                                    {!activityRows.length && (
+                                        <tr>
+                                            <td colSpan={4} className="px-6 py-10 text-center text-slate-400 text-sm">No telemetry yet — interactions log after coordinators perform actions.</td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        )}
+                    </CardContent>
+                </Card>
+            </div>
+
+            <Card className="border-slate-200 shadow-sm">
+                <CardHeader className="bg-slate-50 border-b border-slate-100">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                        <Users size={20} className="text-sky-600" /> Coordinators pulse
+                    </CardTitle>
+                    <CardDescription>Last routed path &amp; ping from synced sessions.</CardDescription>
+                </CardHeader>
+                <CardContent className="p-0 overflow-x-auto">
+                    <table className="w-full text-left text-sm min-w-[600px]">
+                        <thead>
+                            <tr className="text-[10px] font-black uppercase text-slate-400 border-b">
+                                <th className="px-4 py-3">Coordinator</th>
+                                <th className="px-4 py-3">Dept</th>
+                                <th className="px-4 py-3">Email</th>
+                                <th className="px-4 py-3">Last active</th>
+                                <th className="px-4 py-3">Last route</th>
+                                <th className="px-4 py-3">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {coordinators.map((c) => (
+                                <tr key={c.id || c.uid} className="hover:bg-slate-50/70">
+                                    <td className="px-4 py-3 font-bold text-slate-800">{c.name}</td>
+                                    <td className="px-4 py-3 text-xs text-slate-600">{c.department}</td>
+                                    <td className="px-4 py-3 text-xs text-slate-500">{c.email}</td>
+                                    <td className="px-4 py-3 text-xs">{formatWhen(c.lastActiveAt)}</td>
+                                    <td className="px-4 py-3 text-xs font-mono text-slate-500">{c.lastVisitedPath || '—'}</td>
+                                    <td className="px-4 py-3"><span className={`text-[10px] font-black uppercase px-2 py-1 rounded-full ${c.accessStatus === 'revoked' ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-900'}`}>{c.accessStatus || 'active'}</span></td>
+                                </tr>
+                            ))}
+                            {!coordinators.length && (
+                                <tr><td colSpan={6} className="px-6 py-8 text-center text-slate-400">No coordinators on file.</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </CardContent>
+            </Card>
 
             {/* System Status Footer */}
             <div className="bg-white border border-slate-200 rounded-3xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 shadow-sm">

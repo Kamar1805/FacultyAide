@@ -137,6 +137,11 @@ const CourseManager = () => {
                                                                             Common
                                                                         </span>
                                                                     )}
+                                                                    {course.excludeFromTimetable && (
+                                                                        <span className="text-[10px] uppercase font-bold tracking-widest text-amber-950 bg-amber-100 px-2 py-1 rounded border border-amber-200">
+                                                                            Not in timetable gen
+                                                                        </span>
+                                                                    )}
                                                                 </div>
                                                             </CardContent>
                                                         </Card>
