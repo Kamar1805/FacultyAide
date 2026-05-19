@@ -4,7 +4,8 @@ import { Button } from '../../components/ui/button';
 import { UserPlus, Mail, Briefcase, GraduationCap, Trash2, Edit2, Search, X, Check } from 'lucide-react';
 import InstructionGuide from '../../components/InstructionGuide';
 import { db } from '../../firebase';
-import { collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, updateDoc, deleteField } from 'firebase/firestore';
+import { lecturerTitleExcludedFromInvigilation } from '../../utils/examScheduleRules';
 
 const LecturerManagement = () => {
     const [lecturers, setLecturers] = useState([]);
@@ -39,15 +40,22 @@ const LecturerManagement = () => {
         }
 
         try {
+            const payload = {
+                name: newLecturer.name,
+                title: newLecturer.title,
+                email: newLecturer.email,
+                department: newLecturer.department,
+            };
             if (isEditing && editId) {
                 await updateDoc(doc(db, 'lecturers', editId), {
-                    ...newLecturer,
-                    updatedAt: new Date().toISOString()
+                    ...payload,
+                    academicRank: deleteField(),
+                    updatedAt: new Date().toISOString(),
                 });
             } else {
                 await addDoc(collection(db, 'lecturers'), {
-                    ...newLecturer,
-                    createdAt: new Date().toISOString()
+                    ...payload,
+                    createdAt: new Date().toISOString(),
                 });
             }
             setIsAdding(false);
@@ -63,9 +71,9 @@ const LecturerManagement = () => {
     const handleEdit = (lecturer) => {
         setNewLecturer({
             name: lecturer.name,
-            title: lecturer.title,
+            title: lecturer.title || 'Dr.',
             email: lecturer.email,
-            department: lecturer.department
+            department: lecturer.department,
         });
         setEditId(lecturer.id);
         setIsEditing(true);
@@ -89,9 +97,9 @@ const LecturerManagement = () => {
             <InstructionGuide
                 title="Lecturer Directory"
                 steps={[
-                    "Catalog all faculty members participating in this semester.",
-                    "Ensure correct department assignment for accurate timetable filtering.",
-                    "Lecturers added here will be available for coordinators to assign to courses."
+                    'Catalog all faculty members participating in this semester.',
+                    'Use **Title** accurately: entries **Prof.** or **Associate Professor** (stored as Assoc. Prof.) are excluded from **exam invigilator** pools and sanitized from legacy assignments.',
+                    'Other honorific titles (Dr., Mr., Ms., …) appear on roster exports as usual.'
                 ]}
             />
 
@@ -126,6 +134,7 @@ const LecturerManagement = () => {
                                     onChange={(e) => setNewLecturer({ ...newLecturer, title: e.target.value })}
                                 >
                                     <option value="Prof.">Professor</option>
+                                    <option value="Assoc. Prof.">Associate Professor</option>
                                     <option value="Dr.">Doctor</option>
                                     <option value="Mr.">Mr.</option>
                                     <option value="Mrs.">Mrs.</option>
@@ -159,15 +168,20 @@ const LecturerManagement = () => {
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-500 uppercase">Work Email</label>
-                            <input
-                                type="email"
-                                className="flex h-11 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold"
-                                placeholder="j.doe@nileuniversity.edu.ng"
-                                value={newLecturer.email}
-                                onChange={(e) => setNewLecturer({ ...newLecturer, email: e.target.value })}
-                            />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="md:col-span-2 space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase">Work Email</label>
+                                <input
+                                    type="email"
+                                    className="flex h-11 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold"
+                                    placeholder="j.doe@nileuniversity.edu.ng"
+                                    value={newLecturer.email}
+                                    onChange={(e) => setNewLecturer({ ...newLecturer, email: e.target.value })}
+                                />
+                                <p className="text-[11px] text-slate-500 leading-snug">
+                                    <strong>Prof.</strong> and <strong>Assoc. Prof.</strong> titles exclude this staff member from automatic invigilation and from the coordinator’s invigilator pick lists.
+                                </p>
+                            </div>
                         </div>
 
                         <Button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold h-12 rounded-lg" onClick={handleSave}>
@@ -200,6 +214,7 @@ const LecturerManagement = () => {
                         <thead className="bg-slate-50 border-b border-slate-100">
                             <tr>
                                 <th className="p-4 text-xs font-bold text-slate-500 uppercase">Lecturer</th>
+                                <th className="p-4 text-xs font-bold text-slate-500 uppercase">Title / invigilation</th>
                                 <th className="p-4 text-xs font-bold text-slate-500 uppercase">Department</th>
                                 <th className="p-4 text-xs font-bold text-slate-500 uppercase">Contact</th>
                                 <th className="p-4 text-center text-xs font-bold text-slate-500 uppercase">Actions</th>
@@ -216,6 +231,22 @@ const LecturerManagement = () => {
                                             <div>
                                                 <div className="font-bold text-slate-900">{l.title} {l.name}</div>
                                             </div>
+                                        </div>
+                                    </td>
+                                    <td className="p-4">
+                                        <div className="flex flex-col gap-0.5">
+                                            <span className="text-sm font-semibold text-slate-700">
+                                                {String(l.title || '').trim() || '—'}
+                                            </span>
+                                            {lecturerTitleExcludedFromInvigilation(l) ? (
+                                                <span className="text-[10px] font-bold uppercase tracking-wide text-amber-700">
+                                                    Not eligible for exam invigilation
+                                                </span>
+                                            ) : (
+                                                <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                                                    May invigilate
+                                                </span>
+                                            )}
                                         </div>
                                     </td>
                                     <td className="p-4">
@@ -244,7 +275,7 @@ const LecturerManagement = () => {
                             ))}
                             {filteredLecturers.length === 0 && (
                                 <tr>
-                                    <td colSpan="4" className="p-10 text-center text-slate-400 italic">No lecturers found matching your search.</td>
+                                    <td colSpan="5" className="p-10 text-center text-slate-400 italic">No lecturers found matching your search.</td>
                                 </tr>
                             )}
                         </tbody>

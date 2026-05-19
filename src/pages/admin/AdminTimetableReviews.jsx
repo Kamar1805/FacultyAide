@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { auth } from '../../firebase';
 import {
     subscribeAllThreads,
@@ -6,12 +6,15 @@ import {
     addThreadMessage,
     updateThreadStatus,
     markAdminCaughtUp,
+    approveThreadForPublish,
 } from '../../services/timetableReviews';
 import { analyzeLectureScheduleBundles, analyzeExamScheduleBundles } from '../../utils/timetableClashAnalysis';
 import { explainClashesWithAi } from '../../utils/clashAiExplain';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { MessageSquare, Send, ClipboardList, GitCompare, Loader2 } from 'lucide-react';
+import ReviewThreadSchedulePreview from '../../components/ReviewThreadSchedulePreview';
+import ReviewScheduleFullIframeModal from '../../components/ReviewScheduleFullIframeModal';
 
 export default function AdminTimetableReviews() {
     const [tab, setTab] = useState('reviews');
@@ -27,6 +30,9 @@ export default function AdminTimetableReviews() {
     const [clashReport, setClashReport] = useState('');
     const [aiText, setAiText] = useState('');
     const [aiBusy, setAiBusy] = useState(false);
+    const [fullScheduleOpen, setFullScheduleOpen] = useState(false);
+    const [clashPickA, setClashPickA] = useState('');
+    const [clashPickB, setClashPickB] = useState('');
 
     useEffect(() => {
         const unsub = subscribeAllThreads(setThreads);
@@ -43,8 +49,88 @@ export default function AdminTimetableReviews() {
         return () => unsub && unsub();
     }, [activeId]);
 
+    useEffect(() => {
+        setFullScheduleOpen(false);
+    }, [activeId]);
+
+    const clashEligibleThreads = useMemo(() => {
+        return threads.filter(
+            (t) =>
+                t.snapshot &&
+                Array.isArray(t.snapshot.schedule) &&
+                t.snapshot.schedule.length > 0 &&
+                ((clashKind === 'exam' && t.kind === 'exam') || (clashKind !== 'exam' && t.kind !== 'exam'))
+        );
+    }, [threads, clashKind]);
+
+    useEffect(() => {
+        const allowed = new Set(clashEligibleThreads.map((t) => t.id));
+        setClashPickA((a) => (a && allowed.has(a) ? a : ''));
+        setClashPickB((b) => (b && allowed.has(b) ? b : ''));
+    }, [clashEligibleThreads]);
+
+    const applyThreadPick = (slot, threadId) => {
+        if (!threadId) {
+            if (slot === 'a') setClashPickA('');
+            else setClashPickB('');
+            return;
+        }
+        const t = threads.find((x) => x.id === threadId);
+        const sc = t?.snapshot?.schedule;
+        if (!Array.isArray(sc) || sc.length === 0) return;
+        const str = JSON.stringify(sc, null, 2);
+        if (slot === 'a') {
+            setClashPickA(threadId);
+            setJsonA(str);
+        } else {
+            setClashPickB(threadId);
+            setJsonB(str);
+        }
+    };
+
     const active = threads.find((t) => t.id === activeId);
     const snap = active?.snapshot || {};
+    const approvedForPublish =
+        active?.publishApproved === true ||
+        active?.publishApproved === 'true' ||
+        String(active?.status || '').toLowerCase() === 'approved_for_publish';
+
+    const approveForPublication = async () => {
+        if (!activeId) return;
+        setBusy(true);
+        try {
+            const note = (adminNote || '').trim();
+            if (note) {
+                await addThreadMessage(activeId, {
+                    senderRole: 'admin',
+                    senderUid: auth.currentUser?.uid,
+                    senderName: 'Administrator',
+                    body: note,
+                });
+            }
+            await approveThreadForPublish(activeId, note);
+            setThreads((prev) =>
+                prev.map((t) =>
+                    t.id === activeId
+                        ? {
+                              ...t,
+                              publishApproved: true,
+                              status: 'approved_for_publish',
+                              approvalNote: (note || '').trim() || t.approvalNote || '',
+                              pendingCoordinatorAttention: true,
+                              pendingAdminAttention: false,
+                          }
+                        : t
+                )
+            );
+            setAdminNote('');
+        } catch (e) {
+            console.error(e);
+            alert('Failed to record approval.');
+        } finally {
+            setBusy(false);
+        }
+    };
 
     const sendAdminFeedback = async () => {
         if (!activeId || !adminNote.trim()) return;
@@ -112,10 +198,19 @@ export default function AdminTimetableReviews() {
                     { label: 'Schedule B', exams: Array.isArray(slotsB) ? slotsB : slotsB.schedule || slotsB.exams || [] },
                 ]);
                 if (!r.hasClashes) {
-                    setClashReport('No clash detected — merged exam bundles do not share a hall or collide on same departmental level.');
+                    setClashReport('No clash detected — merged exams do not share a hall at the same time, collide on cohort, double-book invigilators, or assign course teachers to cover their own paper.');
                     return;
                 }
-                setClashReport(r.clashes.map((c) => `[${c.type.toUpperCase()}] ${c.date || ''}: ${c.a} vs ${c.b}. Fix: ${c.fix}`).join('\n'));
+                setClashReport(
+                    r.clashes
+                        .map((c) => {
+                            if (c.type === 'invigilate_teacher') return `[INVIGILATE] ${c.label}. Fix: ${c.fix}`;
+                            if (c.type === 'invigilator') return `[INVIGILATOR] ${c.date || ''} · ${c.invigilator || ''}: ${c.a} vs ${c.b}. Fix: ${c.fix}`;
+                            const b = typeof c.b === 'undefined' ? '' : `${c.a} vs ${c.b}`;
+                            return `[${String(c.type).toUpperCase()}] ${c.date || ''}: ${b}. Fix: ${c.fix}`;
+                        })
+                        .join('\n')
+                );
             }
         } catch (e) {
             console.error(e);
@@ -143,6 +238,7 @@ export default function AdminTimetableReviews() {
         if (!sc) return;
         setClashKind(active?.kind === 'exam' ? 'exam' : 'lecture');
         setJsonA(JSON.stringify(sc, null, 2));
+        if (activeId) setClashPickA(activeId);
         setTab('clash');
     };
 
@@ -212,21 +308,82 @@ export default function AdminTimetableReviews() {
                             <Card>
                                 <CardHeader>
                                     <CardTitle className="flex items-center gap-2"><MessageSquare className="text-indigo-600" /> Discuss with coordinator</CardTitle>
-                                    <CardDescription>Approve, request changes, or drag this snapshot into the clash tab.</CardDescription>
-                                    <Button type="button" variant="outline" size="sm" className="w-fit mt-2 font-bold" onClick={hydrateFromActiveThread}>
-                                        Load snapshot into clash checker
-                                    </Button>
+                                    <CardDescription>Approve for publication (coordinators can then publish), send feedback, or request changes. Optional note is stored on the thread and shown to coordinators.</CardDescription>
+                                    {approvedForPublish && (
+                                        <p className="text-sm text-emerald-800 font-bold bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 mt-2 flex items-start gap-2">
+                                            <span className="shrink-0 text-lg leading-none">✓</span>
+                                            <span>
+                                                <span className="font-black uppercase text-[11px] tracking-wide text-emerald-900">
+                                                    Approved for publication
+                                                </span>
+                                                <span className="block mt-1 font-semibold normal-case">
+                                                    Coordinators may publish their linked timetable. No further approval needed unless you revoke by requesting changes later.
+                                                    {active.approvalNote ? (
+                                                        <span className="block mt-2 text-emerald-900/90 italic">Admin note — {active.approvalNote}</span>
+                                                    ) : null}
+                                                </span>
+                                            </span>
+                                        </p>
+                                    )}
                                 </CardHeader>
                                 <CardContent className="space-y-4">
-                                    <div
-                                        className="max-h-48 overflow-y-auto rounded-xl border bg-slate-50 p-3 text-[11px] font-mono whitespace-pre-wrap"
-                                        draggable
-                                        onDragStart={(e) =>
-                                            e.dataTransfer.setData('application/json', JSON.stringify(snap?.schedule || [], null, 2))
-                                        }
-                                    >
-                                        {JSON.stringify(snap?.schedule ?? [], null, 2)?.slice(0, 2800)}
-                                        {(snap?.schedule?.length || 0) > 3 ? '\n…' : ''}
+                                    <div>
+                                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                            <h4 className="text-[11px] font-black uppercase tracking-wider text-slate-500">
+                                                Submitted timetable
+                                            </h4>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                className="rounded-xl border-indigo-200 text-indigo-800 font-black text-xs uppercase tracking-wide shrink-0"
+                                                onClick={() => setFullScheduleOpen(true)}
+                                            >
+                                                Open full iframe view
+                                            </Button>
+                                        </div>
+                                        <ReviewThreadSchedulePreview
+                                            kind={active?.kind === 'exam' ? 'exam' : 'lecture'}
+                                            schedule={snap?.schedule ?? []}
+                                            semester={snap?.semester || ''}
+                                            department={active?.department || ''}
+                                            conflicts={snap?.conflicts ?? []}
+                                            maxBodyHeight={null}
+                                        />
+                                    </div>
+
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50/80 overflow-hidden">
+                                        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-slate-200 bg-white/50">
+                                            <span className="text-xs font-bold text-slate-600">
+                                                Raw JSON (optional — drag into Compare tab fields)
+                                            </span>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                className="text-[11px] font-black rounded-lg border-[#00008b]/30 text-[#00008b]"
+                                                onClick={() => hydrateFromActiveThread()}
+                                            >
+                                                Compare (load into Timetable&nbsp;A)
+                                            </Button>
+                                        </div>
+                                        <details>
+                                            <summary className="px-4 py-2.5 text-xs font-bold text-slate-500 cursor-pointer select-none hover:bg-slate-100/80">
+                                                Expand to view • drag block into Compare tab
+                                            </summary>
+                                            <div
+                                                className="max-h-40 overflow-y-auto border-t border-slate-200 p-3 text-[11px] font-mono whitespace-pre-wrap bg-white"
+                                                draggable
+                                                onDragStart={(e) =>
+                                                    e.dataTransfer.setData(
+                                                        'application/json',
+                                                        JSON.stringify(snap?.schedule || [], null, 2)
+                                                    )
+                                                }
+                                            >
+                                                {JSON.stringify(snap?.schedule ?? [], null, 2)}
+                                            </div>
+                                        </details>
                                     </div>
 
                                     <div className="h-52 overflow-y-auto rounded-xl border p-3 space-y-3 bg-white">
@@ -245,9 +402,29 @@ export default function AdminTimetableReviews() {
                                         className="w-full rounded-xl border min-h-[80px] p-3 text-sm"
                                     />
                                     <div className="flex flex-wrap gap-2">
+                                        {!approvedForPublish ? (
+                                            <Button
+                                                type="button"
+                                                disabled={busy}
+                                                onClick={approveForPublication}
+                                                className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl"
+                                            >
+                                                {busy ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} className="mr-2" />}
+                                                Approve for publication
+                                            </Button>
+                                        ) : (
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                disabled
+                                                className="border-emerald-400 bg-emerald-50 text-emerald-900 font-black rounded-xl cursor-default hover:bg-emerald-50 opacity-100"
+                                            >
+                                                ✓ Approved for publication
+                                            </Button>
+                                        )}
                                         <Button type="button" disabled={busy} onClick={sendAdminFeedback} className="bg-[#579044] hover:bg-[#426d33] text-white font-bold rounded-xl">
                                             {busy ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} className="mr-2" />}
-                                            Publish remarks
+                                            Send feedback only
                                         </Button>
                                         <Button type="button" variant="outline" disabled={busy} onClick={requestChanges} className="font-bold rounded-xl border-amber-300 text-amber-900">
                                             Request changes
@@ -263,7 +440,10 @@ export default function AdminTimetableReviews() {
                     <Card>
                         <CardHeader>
                             <CardTitle>Combine two payloads</CardTitle>
-                            <CardDescription>Drop coordinator JSON exports or paste Firestore snapshots. Lecture: array of timetable slots · Exam: exams array or timetable object.</CardDescription>
+                            <CardDescription>
+                                Pick two <strong>submitted review snapshots</strong> from the dropdowns (shows title · department · row count),
+                                then run the merge check—or paste JSON / drop files manually. Toggle lecture vs exam to filter the list.
+                            </CardDescription>
                             <div className="flex gap-3 pt-3">
                                 <label className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2 cursor-pointer">
                                     <input type="radio" checked={clashKind === 'lecture'} onChange={() => setClashKind('lecture')} /> Lecture-hour merge
@@ -272,23 +452,90 @@ export default function AdminTimetableReviews() {
                                     <input type="radio" checked={clashKind === 'exam'} onChange={() => setClashKind('exam')} /> Exam-session merge
                                 </label>
                             </div>
+                            {!clashEligibleThreads.length ? (
+                                <p className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 mt-3">
+                                    No <strong>{clashKind === 'exam' ? 'exam' : 'lecture'}</strong> submissions with a saved timetable snapshot yet—or open the inbox and select a coordinator thread first.
+                                </p>
+                            ) : (
+                                <p className="text-[11px] text-slate-500 font-medium mt-2">
+                                    {clashEligibleThreads.length} submission(s) eligible for comparison in this mode.
+                                </p>
+                            )}
                         </CardHeader>
                         <CardContent className="grid md:grid-cols-2 gap-4">
                             <div
                                 onDragOver={(e) => e.preventDefault()}
                                 onDrop={onDropJson('a')}
-                                className="space-y-1"
+                                className="space-y-2"
                             >
-                                <div className="text-xs font-black text-slate-500 uppercase">Timetable A</div>
-                                <textarea value={jsonA} onChange={(e) => setJsonA(e.target.value)} className="w-full h-52 font-mono text-xs rounded-xl border border-slate-200 p-3 bg-slate-50" />
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="text-xs font-black text-slate-500 uppercase">Timetable A</div>
+                                    {!!clashPickA && (
+                                        <span className="text-[10px] font-bold text-emerald-700 truncate max-w-[10rem]" title="">
+                                            Linked to submission
+                                        </span>
+                                    )}
+                                </div>
+                                <select
+                                    className="w-full h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800"
+                                    value={clashPickA}
+                                    onChange={(e) => applyThreadPick('a', e.target.value)}
+                                >
+                                    <option value="">— Choose submitted timetable…</option>
+                                    {clashEligibleThreads.map((t) => (
+                                        <option key={t.id} value={t.id}>
+                                            {(t.title || 'Untitled').slice(0, 70)}
+                                            {(t.title || '').length > 70 ? '…' : ''} · {t.department || '—'} ·{' '}
+                                            {t.snapshot?.schedule?.length ?? 0} rows
+                                        </option>
+                                    ))}
+                                </select>
+                                <textarea
+                                    value={jsonA}
+                                    onChange={(e) => {
+                                        setJsonA(e.target.value);
+                                        setClashPickA('');
+                                    }}
+                                    placeholder="Loads from dropdown—or paste lecturer slots / exams JSON array."
+                                    className="w-full h-52 font-mono text-xs rounded-xl border border-slate-200 p-3 bg-slate-50"
+                                />
+                                <p className="text-[10px] text-slate-400">Drag JSON here or paste—editing clears the dropdown link.</p>
                             </div>
                             <div
                                 onDragOver={(e) => e.preventDefault()}
                                 onDrop={onDropJson('b')}
-                                className="space-y-1"
+                                className="space-y-2"
                             >
-                                <div className="text-xs font-black text-slate-500 uppercase">Timetable B</div>
-                                <textarea value={jsonB} onChange={(e) => setJsonB(e.target.value)} className="w-full h-52 font-mono text-xs rounded-xl border border-slate-200 p-3 bg-slate-50" />
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="text-xs font-black text-slate-500 uppercase">Timetable B</div>
+                                    {!!clashPickB && (
+                                        <span className="text-[10px] font-bold text-indigo-700 truncate max-w-[10rem]">Linked</span>
+                                    )}
+                                </div>
+                                <select
+                                    className="w-full h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800"
+                                    value={clashPickB}
+                                    onChange={(e) => applyThreadPick('b', e.target.value)}
+                                >
+                                    <option value="">— Choose submitted timetable…</option>
+                                    {clashEligibleThreads.map((t) => (
+                                        <option key={t.id} value={t.id}>
+                                            {(t.title || 'Untitled').slice(0, 70)}
+                                            {(t.title || '').length > 70 ? '…' : ''} · {t.department || '—'} ·{' '}
+                                            {t.snapshot?.schedule?.length ?? 0} rows
+                                        </option>
+                                    ))}
+                                </select>
+                                <textarea
+                                    value={jsonB}
+                                    onChange={(e) => {
+                                        setJsonB(e.target.value);
+                                        setClashPickB('');
+                                    }}
+                                    placeholder="Second department submission or pasted export."
+                                    className="w-full h-52 font-mono text-xs rounded-xl border border-slate-200 p-3 bg-slate-50"
+                                />
+                                <p className="text-[10px] text-slate-400">Drag JSON here or paste—editing clears the dropdown link.</p>
                             </div>
                             <div className="md:col-span-2 flex flex-wrap gap-2">
                                 <Button type="button" onClick={runClashCheck} className="bg-slate-900 text-white rounded-xl font-bold">
@@ -313,6 +560,14 @@ export default function AdminTimetableReviews() {
                     </Card>
                 </div>
             )}
+            <ReviewScheduleFullIframeModal
+                open={fullScheduleOpen}
+                onClose={() => setFullScheduleOpen(false)}
+                kind={active?.kind === 'exam' ? 'exam' : 'lecture'}
+                schedule={snap?.schedule ?? []}
+                semester={snap?.semester || ''}
+                department={active?.department || ''}
+            />
         </div>
     );
 }

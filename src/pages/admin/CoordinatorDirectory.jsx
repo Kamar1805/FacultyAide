@@ -18,6 +18,7 @@ import { Input } from "../../components/ui/input";
 import { db, auth, provisionAuth } from "../../firebase";
 import { FCOM_DEPARTMENTS } from "../../constants/departments";
 import InstructionGuide from "../../components/InstructionGuide";
+import CoordinatorProfilePanel from "../../components/CoordinatorProfilePanel";
 import {
     Users,
     Building2,
@@ -32,6 +33,7 @@ import {
     X,
     Search,
     Activity,
+    Eye,
 } from "lucide-react";
 
 const formatTs = (iso) => {
@@ -62,6 +64,7 @@ const CoordinatorDirectory = () => {
     const [creating, setCreating] = useState(false);
     const [editOpen, setEditOpen] = useState(null);
     const [editDepartment, setEditDepartment] = useState("");
+    const [profileCoord, setProfileCoord] = useState(null);
 
     useEffect(() => {
         const q = query(collection(db, "users"), where("role", "==", "coordinator"));
@@ -303,7 +306,16 @@ const CoordinatorDirectory = () => {
                                             return (
                                                 <div
                                                     key={row.id}
-                                                    className={`p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center gap-4 ${
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === "Enter" || e.key === " ") {
+                                                            e.preventDefault();
+                                                            setProfileCoord({ id: row.id, ...row });
+                                                        }
+                                                    }}
+                                                    onClick={() => setProfileCoord({ id: row.id, ...row })}
+                                                    className={`p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center gap-4 cursor-pointer transition-colors hover:bg-indigo-50/40 ${
                                                         revoked ? "bg-amber-50/40" : ""
                                                     }`}
                                                 >
@@ -334,6 +346,18 @@ const CoordinatorDirectory = () => {
                                                                 <Mail size={12} />
                                                                 {row.email || "—"}
                                                             </span>
+                                                            {row.prefs?.phone && (
+                                                                <span className="flex items-center gap-1 text-slate-600 font-semibold">
+                                                                    <span className="text-slate-400">Phone</span>
+                                                                    {row.prefs.phone}
+                                                                </span>
+                                                            )}
+                                                            {row.prefs?.officeRoom && (
+                                                                <span className="flex items-center gap-1">
+                                                                    <MapPin size={12} />
+                                                                    {row.prefs.officeRoom}
+                                                                </span>
+                                                            )}
                                                             <span className="flex items-center gap-1">
                                                                 <Clock size={12} />
                                                                 Last active: {formatTs(row.lastActiveAt)}
@@ -350,10 +374,24 @@ const CoordinatorDirectory = () => {
                                                     </div>
                                                     <div className="flex flex-wrap gap-2 lg:justify-end shrink-0">
                                                         <Button
+                                                            type="button"
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="font-bold rounded-xl border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setProfileCoord({ id: row.id, ...row });
+                                                            }}
+                                                        >
+                                                            <Eye size={14} className="mr-1" />
+                                                            Profile
+                                                        </Button>
+                                                        <Button
                                                             variant="outline"
                                                             size="sm"
                                                             className="font-bold rounded-xl"
-                                                            onClick={() => {
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
                                                                 setEditOpen(row.id);
                                                                 setEditDepartment(row.department || FCOM_DEPARTMENTS[0]);
                                                             }}
@@ -366,7 +404,10 @@ const CoordinatorDirectory = () => {
                                                                 size="sm"
                                                                 className="font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white"
                                                                 disabled={busyId === row.id}
-                                                                onClick={() => reactivate(row)}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    reactivate(row);
+                                                                }}
                                                             >
                                                                 {busyId === row.id ? (
                                                                     <RefreshCw size={14} className="animate-spin mr-1" />
@@ -381,7 +422,10 @@ const CoordinatorDirectory = () => {
                                                                 variant="destructive"
                                                                 className="font-bold rounded-xl"
                                                                 disabled={busyId === row.id}
-                                                                onClick={() => revoke(row)}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    revoke(row);
+                                                                }}
                                                             >
                                                                 {busyId === row.id ? (
                                                                     <RefreshCw size={14} className="animate-spin mr-1" />
@@ -402,6 +446,11 @@ const CoordinatorDirectory = () => {
                     )}
                 </CardContent>
             </Card>
+
+            {/* Full profile overlay (same as admin dashboard) */}
+            {profileCoord ? (
+                <CoordinatorProfilePanel userDoc={profileCoord} onClose={() => setProfileCoord(null)} />
+            ) : null}
 
             {/* Create modal */}
             {createOpen && (

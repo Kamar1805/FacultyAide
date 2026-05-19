@@ -5,7 +5,15 @@ import { Calendar, Eye, Edit, Download, Rocket, User, RefreshCw, FileJson, Sheet
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { db } from '../../firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { downloadLectureSchedulePdf, downloadScheduleJson, downloadScheduleCsv } from '../../utils/timetableExport';
+import {
+    downloadLectureSchedulePdf,
+    downloadScheduleJson,
+    downloadScheduleCsv,
+    downloadExamSchedulePdf,
+    downloadExamScheduleCsv,
+    downloadExamScheduleJson,
+    formatExamInvigilatorsCell,
+} from '../../utils/timetableExport';
 
 const DashboardOverview = () => {
     const navigate = useNavigate();
@@ -24,6 +32,7 @@ const DashboardOverview = () => {
         const q = query(
             collection(db, 'saved_timetables'),
             where('department', '==', userData.department),
+            where('published', '==', true),
             where('isActive', '==', true)
         );
 
@@ -40,6 +49,7 @@ const DashboardOverview = () => {
         const qExam = query(
             collection(db, 'exam_timetables'),
             where('department', '==', userData.department),
+            where('published', '==', true),
             where('isActive', '==', true)
         );
 
@@ -77,7 +87,7 @@ const DashboardOverview = () => {
                         {activeTimetable ? (
                             <>Currently viewing <span className="font-bold text-indigo-600">{activeTimetable.name}</span></>
                         ) : (
-                            "No active timetable set for this department."
+                                "No published timetable on the home dashboard yet. Publish an admin-approved version from Lecture or Exam timetable tools."
                         )}
                     </p>
                 </div>
@@ -110,7 +120,7 @@ const DashboardOverview = () => {
                         ))}
                     </div>
                 </div>
-                {activeTimetable && (
+                {(activeTimetable || activeExamTimetable) && (
                     <div className="relative flex flex-wrap gap-2 justify-end" onMouseDown={(e) => e.stopPropagation()}>
                         <Button
                             variant="outline"
@@ -122,40 +132,168 @@ const DashboardOverview = () => {
                             <Download size={14} className="mr-2" /> Export <ChevronDown size={14} className="ml-1" />
                         </Button>
                         {exportOpen && (
-                            <div className="absolute right-0 top-full mt-1 w-56 rounded-xl border border-slate-200 bg-white shadow-xl z-30 py-2 text-left" onMouseDown={(e) => e.stopPropagation()}>
-                                <button
-                                    type="button"
-                                    className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 text-left"
-                                    onClick={() => {
-                                        setExportOpen(false);
-                                        void downloadLectureSchedulePdf(activeTimetable.schedule || [], {
-                                            department: userData?.department,
-                                            level: 'All',
-                                            filePrefix: `${(activeTimetable.name || 'timetable').replace(/\s+/g, '-').slice(0, 40)}`,
-                                            subtitle: activeTimetable.name,
-                                        });
-                                    }}
-                                >
-                                    PDF — all levels
-                                </button>
-                                <button
-                                    type="button"
-                                    className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 text-left"
-                                    onClick={() => {
-                                        setExportOpen(false);
-                                        void downloadLectureSchedulePdf(activeTimetable.schedule || [], {
-                                            department: userData?.department,
-                                            level: selectedLevel,
-                                            filePrefix: `${(activeTimetable.name || 'timetable').replace(/\s+/g, '-').slice(0, 40)}-${selectedLevel}L`,
-                                            subtitle: `${activeTimetable.name} · ${selectedLevel} Level`,
-                                        });
-                                    }}
-                                >
-                                    PDF — {selectedLevel} level only
-                                </button>
-                                <button type="button" className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 flex items-center gap-2" onClick={() => { setExportOpen(false); downloadScheduleJson(activeTimetable.schedule || [], { department: userData?.department, name: `${(activeTimetable.name || 'timetable').replace(/\s+/g, '-')}-all` }); }}><FileJson size={14} /> JSON</button>
-                                <button type="button" className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 flex items-center gap-2" onClick={() => { setExportOpen(false); downloadScheduleCsv(activeTimetable.schedule || [], { department: userData?.department, name: `${(activeTimetable.name || 'timetable').replace(/\s+/g, '-')}-all` }); }}><Sheet size={14} /> CSV</button>
-                                <button type="button" className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 text-indigo-700" onClick={() => { setExportOpen(false); navigate('/coordinator/lecture-timetable'); }}>Open full generator</button>
+                            <div
+                                className="absolute right-0 top-full mt-1 w-64 rounded-xl border border-slate-200 bg-white shadow-xl z-30 py-2 text-left"
+                                onMouseDown={(e) => e.stopPropagation()}
+                            >
+                                {activeTimetable && (
+                                    <>
+                                        <div className="px-4 py-1.5 text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                                            Lecture timetable
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 text-left"
+                                            onClick={() => {
+                                                setExportOpen(false);
+                                                void downloadLectureSchedulePdf(activeTimetable.schedule || [], {
+                                                    department: userData?.department,
+                                                    level: 'All',
+                                                    filePrefix: `${(activeTimetable.name || 'timetable').replace(/\s+/g, '-').slice(0, 40)}`,
+                                                    subtitle: activeTimetable.name,
+                                                });
+                                            }}
+                                        >
+                                            PDF — all levels
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 text-left"
+                                            onClick={() => {
+                                                setExportOpen(false);
+                                                void downloadLectureSchedulePdf(activeTimetable.schedule || [], {
+                                                    department: userData?.department,
+                                                    level: selectedLevel,
+                                                    filePrefix: `${(activeTimetable.name || 'timetable').replace(/\s+/g, '-').slice(0, 40)}-${selectedLevel}L`,
+                                                    subtitle: `${activeTimetable.name} · ${selectedLevel} Level`,
+                                                });
+                                            }}
+                                        >
+                                            PDF — {selectedLevel} level only
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 flex items-center gap-2"
+                                            onClick={() => {
+                                                setExportOpen(false);
+                                                downloadScheduleJson(activeTimetable.schedule || [], {
+                                                    department: userData?.department,
+                                                    name: `${(activeTimetable.name || 'timetable').replace(/\s+/g, '-')}-all`,
+                                                });
+                                            }}
+                                        >
+                                            <FileJson size={14} /> JSON
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 flex items-center gap-2"
+                                            onClick={() => {
+                                                setExportOpen(false);
+                                                downloadScheduleCsv(activeTimetable.schedule || [], {
+                                                    department: userData?.department,
+                                                    name: `${(activeTimetable.name || 'timetable').replace(/\s+/g, '-')}-all`,
+                                                });
+                                            }}
+                                        >
+                                            <Sheet size={14} /> CSV
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 text-indigo-700"
+                                            onClick={() => {
+                                                setExportOpen(false);
+                                                navigate('/coordinator/lecture-timetable');
+                                            }}
+                                        >
+                                            Open lecture generator
+                                        </button>
+                                    </>
+                                )}
+                                {activeTimetable && activeExamTimetable && (
+                                    <div className="my-2 mx-3 border-t border-slate-100" role="presentation" />
+                                )}
+                                {activeExamTimetable && (
+                                    <>
+                                        <div className="px-4 py-1.5 text-[10px] font-black text-indigo-700 uppercase tracking-wider">
+                                            Exam timetable
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 text-left"
+                                            onClick={() => {
+                                                setExportOpen(false);
+                                                void downloadExamSchedulePdf(activeExamTimetable.schedule || [], {
+                                                    department: userData?.department,
+                                                    level: 'All',
+                                                    filePrefix: `${(activeExamTimetable.semester || 'exam').toString().replace(/\s+/g, '-')}-Sem-Exams`,
+                                                    subtitle:
+                                                        activeExamTimetable.name ||
+                                                        `${activeExamTimetable.semester || ''} semester exams`,
+                                                });
+                                            }}
+                                        >
+                                            Exams PDF — all levels
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 text-left"
+                                            onClick={() => {
+                                                setExportOpen(false);
+                                                const filtered = (activeExamTimetable.schedule || []).filter(
+                                                    (s) => s.level != null && s.level.toString() === selectedLevel
+                                                );
+                                                if (!filtered.length) {
+                                                    window.alert(`No exams for ${selectedLevel} level in the published timetable.`);
+                                                    return;
+                                                }
+                                                void downloadExamSchedulePdf(filtered, {
+                                                    department: userData?.department,
+                                                    level: selectedLevel,
+                                                    filePrefix: `${(activeExamTimetable.semester || 'exam').toString().replace(/\s+/g, '-')}-Sem-Exams-${selectedLevel}L`,
+                                                    subtitle: `${activeExamTimetable.semester || ''} · ${selectedLevel} level`,
+                                                });
+                                            }}
+                                        >
+                                            Exams PDF — {selectedLevel} level
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 flex items-center gap-2"
+                                            onClick={() => {
+                                                setExportOpen(false);
+                                                downloadExamScheduleJson(activeExamTimetable.schedule || [], {
+                                                    department: userData?.department,
+                                                    name: `${(activeExamTimetable.semester || 'exams').toString().replace(/\s+/g, '-')}-exams`,
+                                                });
+                                            }}
+                                        >
+                                            <FileJson size={14} /> Exams JSON
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 flex items-center gap-2"
+                                            onClick={() => {
+                                                setExportOpen(false);
+                                                downloadExamScheduleCsv(activeExamTimetable.schedule || [], {
+                                                    department: userData?.department,
+                                                    name: `${(activeExamTimetable.semester || 'exams').toString().replace(/\s+/g, '-')}-exams`,
+                                                });
+                                            }}
+                                        >
+                                            <Sheet size={14} /> Exams CSV (invigilators)
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="w-full px-4 py-2.5 text-xs font-bold hover:bg-slate-50 text-indigo-700"
+                                            onClick={() => {
+                                                setExportOpen(false);
+                                                navigate('/coordinator/exam-timetable');
+                                            }}
+                                        >
+                                            Open exam generator
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         )}
                     </div>
@@ -246,7 +384,7 @@ const DashboardOverview = () => {
                             <AlertCircle size={48} className="opacity-20" />
                             <div>
                                 <p className="font-bold text-slate-500">No Active Timetable</p>
-                                <p className="text-sm">Go to Generate tab and set a saved timetable as active.</p>
+                                <p className="text-sm">Go to the timetable tools, save, get admin approval, publish, and set active if needed.</p>
                             </div>
                             <Button
                                 variant="outline"
@@ -284,6 +422,7 @@ const DashboardOverview = () => {
                                         <th className="p-3 text-[10px] font-black text-indigo-800 uppercase tracking-wider text-left">Course</th>
                                         <th className="p-3 text-[10px] font-black text-indigo-800 uppercase tracking-wider text-center">Time & Duration</th>
                                         <th className="p-3 text-[10px] font-black text-indigo-800 uppercase tracking-wider text-center">Venue</th>
+                                        <th className="p-3 text-[10px] font-black text-indigo-800 uppercase tracking-wider text-left">Invigilators</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-indigo-50 border-b border-indigo-100">
@@ -305,11 +444,14 @@ const DashboardOverview = () => {
                                                     {exam.venueName}
                                                 </div>
                                             </td>
+                                            <td className="p-3 text-xs font-medium text-slate-600 max-w-[200px]">
+                                                {formatExamInvigilatorsCell(exam) || '—'}
+                                            </td>
                                         </tr>
                                     ))}
                                     {activeExamTimetable.schedule?.filter(s => s.level.toString() === selectedLevel).length === 0 && (
                                         <tr>
-                                            <td colSpan="4" className="p-8 text-center text-indigo-400 font-medium">
+                                            <td colSpan="5" className="p-8 text-center text-indigo-400 font-medium">
                                                 No exams scheduled for {selectedLevel} Level.
                                             </td>
                                         </tr>

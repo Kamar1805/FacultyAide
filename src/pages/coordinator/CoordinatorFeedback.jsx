@@ -9,6 +9,7 @@ import {
 } from '../../services/timetableReviews';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
+import ReviewThreadSchedulePreview from '../../components/ReviewThreadSchedulePreview';
 import { MessageSquare, Send, ArrowRight, RefreshCw, Calendar, FileText } from 'lucide-react';
 
 export default function CoordinatorFeedback() {
@@ -38,6 +39,7 @@ export default function CoordinatorFeedback() {
     }, [activeId]);
 
     const active = threads.find((t) => t.id === activeId);
+    const snap = active?.snapshot || {};
 
     const openInGenerator = () => {
         if (!active?.id) return;
@@ -124,7 +126,27 @@ export default function CoordinatorFeedback() {
                             </div>
                         </CardHeader>
                         <CardContent className="flex-1 flex flex-col p-0">
-                            <div className="flex-1 overflow-y-auto p-4 space-y-3 max-h-[22rem] bg-slate-50/50">
+                            <div className="shrink-0 px-4 pt-4 pb-3 border-b border-slate-100 bg-white space-y-2">
+                                <h4 className="text-[11px] font-black uppercase tracking-wider text-slate-500">
+                                    Timetable snapshot (as submitted)
+                                </h4>
+                                <ReviewThreadSchedulePreview
+                                    kind={active?.kind === 'exam' ? 'exam' : 'lecture'}
+                                    schedule={snap?.schedule ?? []}
+                                    semester={snap?.semester || ''}
+                                    department={active?.department || ''}
+                                    conflicts={snap?.conflicts ?? []}
+                                />
+                                <details className="rounded-lg border border-slate-100 bg-slate-50/60 text-xs">
+                                    <summary className="px-3 py-2 font-bold text-slate-600 cursor-pointer select-none hover:bg-slate-100/80">
+                                        Raw schedule JSON
+                                    </summary>
+                                    <pre className="max-h-32 overflow-auto border-t border-slate-100 p-3 font-mono text-[10px] whitespace-pre-wrap bg-white">
+                                        {JSON.stringify(snap?.schedule ?? [], null, 2)}
+                                    </pre>
+                                </details>
+                            </div>
+                            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[12rem] max-h-[min(22rem,40vh)] bg-slate-50/50">
                                 {msgs.map((m) => (
                                     <div
                                         key={m.id}

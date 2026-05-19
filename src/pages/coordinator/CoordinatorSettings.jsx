@@ -22,6 +22,7 @@ const CoordinatorSettings = () => {
     const uid = userData?.uid || auth.currentUser?.uid;
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [justSaved, setJustSaved] = useState(false);
     const [form, setForm] = useState({ name: '', ...DEFAULT_PREFS });
 
     useEffect(() => {
@@ -71,9 +72,12 @@ const CoordinatorSettings = () => {
             };
             await updateDoc(doc(db, 'users', uid), {
                 name: form.name.trim(),
+                email: auth.currentUser?.email || '',
                 prefs,
                 settingsUpdatedAt: new Date().toISOString(),
             });
+            setJustSaved(true);
+            window.setTimeout(() => setJustSaved(false), 3200);
         } catch (e) {
             console.error(e);
             alert('Could not save settings. Check Firestore permissions.');
@@ -96,6 +100,12 @@ const CoordinatorSettings = () => {
                 <h1 className="text-3xl font-black text-slate-900 tracking-tight">Profile &amp; Settings</h1>
                 <p className="text-slate-500 mt-1">Details used across exports and for admin visibility.</p>
             </div>
+
+            {justSaved ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50/90 px-4 py-3 text-sm font-bold text-emerald-900 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
+                    Saved — your name, phone, and office details are updated everywhere (sidebar, header, and admin directory).
+                </div>
+            ) : null}
 
             <Card className="border-slate-200 shadow-sm overflow-hidden ring-1 ring-slate-900/5">
                 <CardHeader className="border-b bg-slate-50/80">

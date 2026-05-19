@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useOutletContext, useNavigate, useSearchParams } from 'react-router-dom';
 import { auth, db } from '../../firebase';
-import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc, onSnapshot, orderBy, deleteField } from 'firebase/firestore';
 import { parseAIConstraints } from '../../utils/aiParser';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
@@ -9,10 +9,18 @@ import {
     Calendar, Clock, User, Rocket, Check,
     AlertCircle, RefreshCw, Layers, Sparkles, Plus, MessageSquare,
     Play, Download, MapPin, Trash2, Home, Share2, Save, X, ChevronRight, LayoutGrid, ArrowRight,
-    ChevronDown, FileJson, Sheet, PencilLine, Send,
+    ChevronDown, FileJson, Sheet, PencilLine, Send, Mail,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { downloadLectureSchedulePdf, downloadScheduleJson, downloadScheduleCsv } from '../../utils/timetableExport';
+import {
+    downloadLectureSchedulePdf,
+    downloadScheduleJson,
+    downloadScheduleCsv,
+    collectLectureStaffOptions,
+    filterLectureScheduleByStaffNorm,
+    downloadLectureStaffPersonalPdfInteractive,
+} from '../../utils/timetableExport';
+import { normalizePersonTag } from '../../utils/timetableClashAnalysis';
 import { logActivity } from '../../utils/activityLog';
 import { createReviewThread, addThreadMessage, getReviewThread, markCoordinatorCaughtUp } from '../../services/timetableReviews';
 import OptionalNoteToAdminsModal from '../../components/OptionalNoteToAdminsModal';
@@ -56,9 +64,13 @@ const LectureTimetable = () => {
     const [editingSavedId, setEditingSavedId] = useState(null);
     const [scheduleEditMode, setScheduleEditMode] = useState(false);
     const [exportMenuOpen, setExportMenuOpen] = useState(false);
+    /** Empty string = department-wide view */
+    const [lectureStaffViewNorm, setLectureStaffViewNorm] = useState('');
     const [savingEdits, setSavingEdits] = useState(false);
     const [sendingReview, setSendingReview] = useState(false);
     const [adminNoteModalOpen, setAdminNoteModalOpen] = useState(false);
+    const [workingSavedTimetableId, setWorkingSavedTimetableId] = useState(null);
+    const [threadApprovals, setThreadApprovals] = useState({});
 
     // New State for Enhanced Workflow
     const [setupStep, setSetupStep] = useState(1); // 1: Session, 2: Config
@@ -84,6 +96,30 @@ const LectureTimetable = () => {
         return () => unsubscribe();
     }, [userData]);
 
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            const map = {};
+            for (const t of savedTimetables) {
+                if (!t.lastReviewThreadId) {
+                    map[t.id] = false;
+                    continue;
+                }
+                try {
+                    const th = await getReviewThread(t.lastReviewThreadId);
+                    if (cancelled) return;
+                    map[t.id] = th?.publishApproved === true;
+                } catch {
+                    map[t.id] = false;
+                }
+            }
+            if (!cancelled) setThreadApprovals(map);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [savedTimetables]);
+
     const editIdParam = searchParams.get('edit');
     useEffect(() => {
         if (!editIdParam || !savedTimetables.length) return;
@@ -91,6 +127,7 @@ const LectureTimetable = () => {
         if (!t) return;
         setGeneratedResult({ schedule: [...(t.schedule || [])], conflicts: t.conflicts || [] });
         setEditingSavedId(t.id);
+        setWorkingSavedTimetableId(t.id);
         setStep(3);
         setViewMode('generate');
         setScheduleEditMode(true);
@@ -135,6 +172,7 @@ const LectureTimetable = () => {
                 setStep(3);
                 setViewMode('generate');
                 setScheduleEditMode(true);
+                setWorkingSavedTimetableId(t.linkedSavedLectureId || null);
                 setEditingSavedId(null);
                 markCoordinatorCaughtUp(reviewThreadId).catch(() => {});
                 setSearchParams((p) => {
@@ -193,14 +231,14 @@ const LectureTimetable = () => {
                 const lecturersSnap = await getDocs(lecturersQ);
                 const lecturers = lecturersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-                // 5. Other departments’ published/active timetables (venue & lecturer occupancy)
+                // 5. Other departments — only ADMIN-PUBLISHED timetables block venues/lecturers (drafts/active-unpublished excluded)
                 const allSavedSnap = await getDocs(collection(db, 'saved_timetables'));
                 const activeOthers = allSavedSnap.docs
                     .map((d) => ({ id: d.id, ...d.data() }))
                     .filter(
                         (t) =>
                             t.department !== userData.department &&
-                            (t.isActive === true || t.published === true)
+                            t.published === true
                     );
 
                 setCrossDeptTimetables(activeOthers);
@@ -389,8 +427,10 @@ const LectureTimetable = () => {
             await new Promise(resolve => setTimeout(resolve, 500));
 
             setGeneratedResult(result);
+            setLectureStaffViewNorm('');
             setEditingSavedId(null);
             setScheduleEditMode(false);
+            setWorkingSavedTimetableId(null);
             setProgress(100);
             setStep(3);
         } catch (error) {
@@ -421,6 +461,10 @@ const LectureTimetable = () => {
             alert('Generate or load a timetable first.');
             return;
         }
+        if (!workingSavedTimetableId) {
+            alert('Save this timetable first (use Save Timetable and keep it as your working saved version), then send for review. The review is tied to that saved copy.');
+            return;
+        }
         setAdminNoteModalOpen(true);
     };
 
@@ -437,6 +481,7 @@ const LectureTimetable = () => {
                 department: userData.department,
                 kind: 'lecture',
                 title: `${userData.department} · ${selectedSemester} Semester · Lecture draft`,
+                linkedSavedLectureId: workingSavedTimetableId,
                 snapshot: {
                     schedule: generatedResult.schedule,
                     conflicts: generatedResult.conflicts || [],
@@ -444,6 +489,10 @@ const LectureTimetable = () => {
                     nlConstraints: addedConstraints,
                     courseSelectionIds: selectedCourseIds,
                 },
+            });
+            await updateDoc(doc(db, 'saved_timetables', workingSavedTimetableId), {
+                lastReviewThreadId: threadId,
+                updatedAt: new Date().toISOString(),
             });
             const body =
                 (noteRaw || '').trim() ||
@@ -495,6 +544,7 @@ const LectureTimetable = () => {
             });
             setSaveModalOpen(false);
             setNewTimetableName('');
+            setWorkingSavedTimetableId(ref.id);
             alert("Timetable saved successfully!");
         } catch (error) {
             console.error("Error saving timetable:", error);
@@ -538,13 +588,38 @@ const LectureTimetable = () => {
 
     const handleTogglePublish = async (t) => {
         const next = !t.published;
+        if (next) {
+            if (!t.lastReviewThreadId) {
+                alert('Send this timetable to administrators for review first. Publishing is enabled only after an administrator approves it.');
+                return;
+            }
+            try {
+                const th = await getReviewThread(t.lastReviewThreadId);
+                if (!th?.publishApproved) {
+                    alert('An administrator must approve this timetable for publication before you can publish it. Check Timetable feedback or wait for approval.');
+                    return;
+                }
+            } catch {
+                alert('Could not verify approval status. Try again or contact an administrator.');
+                return;
+            }
+        }
         try {
-            await updateDoc(doc(db, 'saved_timetables', t.id), {
+            const patch = {
                 published: next,
                 status: next ? 'published' : 'draft',
                 publishedAt: next ? new Date().toISOString() : '',
                 updatedAt: new Date().toISOString(),
-            });
+                isActive: next,
+            };
+            await updateDoc(doc(db, 'saved_timetables', t.id), patch);
+            if (next) {
+                for (const x of savedTimetables) {
+                    if (x.id !== t.id && x.isActive) {
+                        await updateDoc(doc(db, 'saved_timetables', x.id), { isActive: false });
+                    }
+                }
+            }
             await logActivity(db, {
                 uid: auth.currentUser?.uid,
                 userName: userData?.name,
@@ -555,10 +630,15 @@ const LectureTimetable = () => {
                 targetId: t.id,
                 meta: { name: t.name },
             });
-            alert(next ? 'Published — faculty admin can review it in the catalogue.' : 'Publication withdrawn (draft again).');
+            if (next) {
+                alert('Published. It will appear on your home dashboard and the admin overview.');
+                navigate('/coordinator');
+            } else {
+                alert('Publication withdrawn (draft again).');
+            }
         } catch (error) {
             console.error(error);
-            alert('Could not update publish state.');
+            alert('Could not update publish state. If this persists, ensure Firestore rules are deployed.');
         }
     };
 
@@ -570,6 +650,7 @@ const LectureTimetable = () => {
                 schedule: generatedResult.schedule,
                 conflicts: generatedResult.conflicts || [],
                 updatedAt: new Date().toISOString(),
+                lastReviewThreadId: deleteField(),
             });
             await logActivity(db, {
                 uid: auth.currentUser?.uid,
@@ -591,28 +672,79 @@ const LectureTimetable = () => {
         }
     };
 
+    const canEditSlots = !!(scheduleEditMode && editingSavedId);
+
+    const lectureStaffOptions = useMemo(
+        () => collectLectureStaffOptions(generatedResult.schedule || []),
+        [generatedResult.schedule],
+    );
+
+    const lectureScheduleForStaffView = useMemo(() => {
+        if (!lectureStaffViewNorm) return generatedResult.schedule || [];
+        return filterLectureScheduleByStaffNorm(generatedResult.schedule || [], lectureStaffViewNorm);
+    }, [generatedResult.schedule, lectureStaffViewNorm]);
+
+    const selectedLectureStaffLabel = lectureStaffOptions.find((o) => o.norm === lectureStaffViewNorm)?.label || '';
+
+    const selectedLectureStaffEmail = useMemo(() => {
+        if (!lectureStaffViewNorm || !fetchedLecturers.length) return '';
+        for (const l of fetchedLecturers) {
+            const disp = `${l.title || ''} ${l.name || ''}`.trim();
+            if (normalizePersonTag(disp) === lectureStaffViewNorm) return String(l.email || '').trim();
+        }
+        return '';
+    }, [lectureStaffViewNorm, fetchedLecturers]);
+
     const handleDownloadPDF = (level = 'All') => {
         setExportMenuOpen(false);
+        const staffNorm = lectureStaffViewNorm || '';
+        const pf = staffNorm ? `Lecture-Personal-${(selectedLectureStaffLabel || 'Staff').replace(/\s+/g, '-').slice(0, 40)}` : 'Nile-Lecture-Timetable';
         void downloadLectureSchedulePdf(generatedResult.schedule, {
             department: userData?.department,
             level,
-            filePrefix: 'Nile-Lecture-Timetable',
+            filePrefix: pf,
+            staffNorm,
+            staffDisplayLabel: selectedLectureStaffLabel,
+            subtitle:
+                staffNorm && selectedLectureStaffLabel
+                    ? `${userData?.department || ''} · ${selectedSemester} semester — ${selectedLectureStaffLabel}`
+                    : undefined,
         });
+    };
+
+    const handleLectureStaffSharePdf = async () => {
+        if (!lectureStaffViewNorm) {
+            alert('Choose a lecturer from the dropdown first.');
+            return;
+        }
+        const pf = `Lecture-Personal-${(selectedLectureStaffLabel || 'Staff').replace(/\s+/g, '-').slice(0, 40)}`;
+        await downloadLectureStaffPersonalPdfInteractive(generatedResult.schedule, {
+            department: userData?.department,
+            level: 'All',
+            filePrefix: pf,
+            staffNorm: lectureStaffViewNorm,
+            staffDisplayLabel: selectedLectureStaffLabel,
+            lecturerEmail: selectedLectureStaffEmail,
+            subtitle: `${userData?.department || ''} · ${selectedSemester} semester — ${selectedLectureStaffLabel}`,
+        });
+        if (!selectedLectureStaffEmail && lectureStaffViewNorm) {
+            window.alert(
+                'No matching work email found in Lecturer Management for this person. Export still ran — send the PDF manually.',
+            );
+        }
     };
 
     const handleShareWhatsApp = (level = 'All') => {
         const text = `*OFFICIAL NILE UNIVERSITY TIMETABLE*\nDept: ${userData.department}\nLevel: ${level}\n\nGenerated via Nile FacultyAide. Please check your dashboard for the full interactive view!`;
         window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
     };
-    // Helper to group courses by level for display
+
     const coursesByLevel = fetchedCourses.reduce((acc, course) => {
         const lvl = course.level || 'Unknown';
         if (!acc[lvl]) acc[lvl] = 0;
         acc[lvl]++;
         return acc;
     }, {});
-
-    const canEditSlots = !!(scheduleEditMode && editingSavedId);
 
     return (
         <div className="space-y-8 animate-in fade-in duration-700 pb-20">
@@ -672,6 +804,11 @@ const LectureTimetable = () => {
                                                     <Send size={10} /> Published
                                                 </div>
                                             )}
+                                            {t.lastReviewThreadId && !t.published && (
+                                                <div className={`flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-widest px-2.5 py-1 rounded-lg border ${threadApprovals[t.id] ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-amber-800 bg-amber-50 border-amber-200'}`}>
+                                                    {threadApprovals[t.id] ? 'Admin approved — publish' : 'Awaiting admin approval'}
+                                                </div>
+                                            )}
                                         </div>
                                     </CardHeader>
 
@@ -682,6 +819,7 @@ const LectureTimetable = () => {
                                                 onClick={() => {
                                                     setGeneratedResult({ schedule: t.schedule, conflicts: t.conflicts || [] });
                                                     setEditingSavedId(null);
+                                                    setWorkingSavedTimetableId(t.id);
                                                     setScheduleEditMode(false);
                                                     setStep(3);
                                                     setViewMode('generate');
@@ -708,8 +846,10 @@ const LectureTimetable = () => {
                                             </Button>
                                             <Button
                                                 variant={t.published ? 'outline' : 'default'}
-                                                className={`font-bold text-xs h-10 rounded-xl ${t.published ? 'border-amber-200 text-amber-800 hover:bg-amber-50' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
+                                                className={`font-bold text-xs h-10 rounded-xl ${t.published ? 'border-amber-200 text-amber-800 hover:bg-amber-50' : !t.lastReviewThreadId || !threadApprovals[t.id] ? 'bg-slate-300 text-slate-600 cursor-not-allowed hover:bg-slate-300' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
                                                 onClick={() => handleTogglePublish(t)}
+                                                disabled={!t.published && (!t.lastReviewThreadId || threadApprovals[t.id] !== true)}
+                                                title={!t.published && (!t.lastReviewThreadId || threadApprovals[t.id] !== true) ? 'Send for admin review first, then wait for approval before publishing.' : ''}
                                             >
                                                 <Send size={14} className="mr-2" /> {t.published ? 'Unpublish' : 'Publish'}
                                             </Button>
@@ -1217,7 +1357,7 @@ const LectureTimetable = () => {
                             <div className="flex flex-col lg:flex-row lg:justify-between lg:items-end gap-4 border-b border-slate-200 pb-6">
                                 <div>
                                     <h2 className="text-4xl font-black text-slate-900 tracking-tight">Generated Timetable</h2>
-                                    <p className="text-slate-500 font-medium mt-1">Review, export to your device, save, or publish.</p>
+                                    <p className="text-slate-500 font-medium mt-1">Review, export, save a version, send it to admins for approval, then publish from <strong>Saved timetables</strong>.</p>
                                 </div>
                                 <div className="flex flex-wrap gap-2 items-center justify-end">
                                     <div className="relative" onMouseDown={(e) => e.stopPropagation()}>
@@ -1226,24 +1366,27 @@ const LectureTimetable = () => {
                                         </Button>
                                         {exportMenuOpen && (
                                             <div className="absolute right-0 top-full mt-2 w-56 rounded-xl border border-slate-200 bg-white shadow-2xl z-50 py-2" onMouseDown={(e) => e.stopPropagation()}>
-                                                <button type="button" className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-50" onClick={() => handleDownloadPDF('All')}>PDF — full schedule</button>
+                                                <button type="button" className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-50" onClick={() => handleDownloadPDF('All')}>
+                                                    {lectureStaffViewNorm ? `PDF — ${selectedLectureStaffLabel || 'lecturer'} (all levels)` : 'PDF — full schedule'}
+                                                </button>
                                                 <button type="button" className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-50 flex items-center gap-2" onClick={() => { setExportMenuOpen(false); downloadScheduleJson(generatedResult.schedule, { department: userData?.department, name: 'lecture-timetable' }); }}><FileJson size={14} /> JSON download</button>
                                                 <button type="button" className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-50 flex items-center gap-2" onClick={() => { setExportMenuOpen(false); downloadScheduleCsv(generatedResult.schedule, { department: userData?.department, name: 'lecture-timetable' }); }}><Sheet size={14} /> CSV download</button>
-                                                <button type="button" className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-emerald-50 text-emerald-900 flex items-center gap-2 border-t border-slate-100" onClick={() => { setExportMenuOpen(false); void handleSendLectureToAdmins(); }} disabled={sendingReview}><MessageSquare size={14} /> Send to admins for review</button>
+                                                <button type="button" className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-emerald-50 text-emerald-900 flex items-center gap-2 border-t border-slate-100 disabled:opacity-50" onClick={() => { setExportMenuOpen(false); void handleSendLectureToAdmins(); }} disabled={sendingReview || !workingSavedTimetableId} title={!workingSavedTimetableId ? 'Save the timetable first' : ''}><MessageSquare size={14} /> Send to admins for review</button>
                                             </div>
                                         )}
                                     </div>
                                     <Button
                                         type="button"
                                         variant="outline"
-                                        className="font-bold border-emerald-200 text-emerald-800 hover:bg-emerald-50"
-                                        disabled={sendingReview}
+                                        className="font-bold border-emerald-200 text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
+                                        disabled={sendingReview || !workingSavedTimetableId}
+                                        title={!workingSavedTimetableId ? 'Save your timetable first (Save Timetable). Sending for review is tied to that saved copy.' : ''}
                                         onClick={() => void handleSendLectureToAdmins()}
                                     >
                                         {sendingReview ? <RefreshCw size={16} className="mr-2 animate-spin" /> : <MessageSquare size={16} className="mr-2" />}
                                         Send to admins
                                     </Button>
-                                    <Button variant="outline" className="font-bold border-slate-200 text-slate-600 hover:bg-slate-50" type="button" onClick={() => { setStep(1); setEditingSavedId(null); setScheduleEditMode(false); }}>
+                                    <Button variant="outline" className="font-bold border-slate-200 text-slate-600 hover:bg-slate-50" type="button" onClick={() => { setStep(1); setEditingSavedId(null); setWorkingSavedTimetableId(null); setScheduleEditMode(false); setLectureStaffViewNorm(''); }}>
                                         <RefreshCw size={16} className="mr-2" /> Regenerate
                                     </Button>
                                     <Button className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-200" type="button" onClick={() => setSaveModalOpen(true)}>
@@ -1252,8 +1395,41 @@ const LectureTimetable = () => {
                                 </div>
                             </div>
 
+                            <div className="rounded-xl border border-indigo-100 bg-white shadow-sm p-4 flex flex-col lg:flex-row lg:items-end gap-4">
+                                <div className="flex-1 min-w-[240px] space-y-1.5">
+                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Staff view — lecturer timetable</label>
+                                    <select
+                                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-800"
+                                        value={lectureStaffViewNorm}
+                                        onChange={(e) => setLectureStaffViewNorm(e.target.value)}
+                                    >
+                                        <option value="">All lecturers — full department timetable</option>
+                                        {lectureStaffOptions.map((o) => (
+                                            <option key={o.norm} value={o.norm}>
+                                                {o.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <p className="text-[11px] text-slate-500 leading-snug">
+                                        Shows only slots where that lecturer is assigned. Export PDF respects this scope; per-level PDF buttons use the same filter. Share tries your device share sheet, then downloads and opens mail with the work email from Lecturer Management when available.
+                                    </p>
+                                </div>
+                                <div className="flex flex-wrap gap-2 shrink-0">
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="font-bold border-indigo-200 text-indigo-900"
+                                        disabled={!lectureStaffViewNorm}
+                                        onClick={() => void handleLectureStaffSharePdf()}
+                                    >
+                                        <Mail size={16} className="mr-2" />
+                                        Share / mail PDF
+                                    </Button>
+                                </div>
+                            </div>
+
                             {['100', '200', '300', '400', 'Other'].map(level => {
-                                const levelSchedule = generatedResult.schedule.filter(item => {
+                                const levelSchedule = lectureScheduleForStaffView.filter(item => {
                                     const lv = item.level != null ? String(item.level) : '';
                                     if (level === 'Other') {
                                         return lv === '' || !['100', '200', '300', '400'].includes(lv);

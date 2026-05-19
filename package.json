@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "firebase:login": "npx --yes firebase-tools@latest login",
     "firebase:use": "npx --yes firebase-tools@latest use --add",
-    "firebase:deploy:firestore": "npx --yes firebase-tools@latest deploy --only firestore:rules,firestore:indexes"
+    "firebase:deploy:firestore": "CI=1 npx --yes firebase-tools@latest deploy --only firestore:rules,firestore:indexes",
+    "docs:pdf:firestore": "npx --yes md-to-pdf docs/Firestore-Database-Section4.3.md --pdf-options '{\"format\": \"A4\", \"margin\": \"18mm\"}'"
   },
   "dependencies": {
     "clsx": "^2.1.1",

@@ -30,6 +30,28 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/timetable_review_threads/$(threadId)).data;
     }
 
+    function lecturePublishGate(docId) {
+      let tid = request.resource.data.lastReviewThreadId;
+      return tid is string && tid.size() > 0 &&
+        tid == resource.data.lastReviewThreadId &&
+        exists(/databases/$(database)/documents/timetable_review_threads/$(tid)) &&
+        threadData(tid).publishApproved == true &&
+        threadData(tid).linkedSavedLectureId == docId &&
+        threadData(tid).coordinatorUid == request.auth.uid &&
+        threadData(tid).kind == 'lecture';
+    }
+
+    function examPublishGate(docId) {
+      let tid = request.resource.data.lastReviewThreadId;
+      return tid is string && tid.size() > 0 &&
+        tid == resource.data.lastReviewThreadId &&
+        exists(/databases/$(database)/documents/timetable_review_threads/$(tid)) &&
+        threadData(tid).publishApproved == true &&
+        threadData(tid).linkedExamTimetableId == docId &&
+        threadData(tid).coordinatorUid == request.auth.uid &&
+        threadData(tid).kind == 'exam';
+    }
+
     // --- Users (auth profile; admin lists coordinators only) ---
     match /users/{userId} {
       allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
@@ -68,15 +90,25 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if isCoordinator() &&
         request.resource.data.department == coordinatorDept() &&
-        request.resource.data.coordinatorUid == request.auth.uid;
-      allow update: if isCoordinator() && resource.data.department == coordinatorDept();
+        request.resource.data.coordinatorUid == request.auth.uid &&
+        request.resource.data.published != true;
+      allow update: if isCoordinator() && resource.data.department == coordinatorDept() && (
+        !(request.resource.data.published == true && resource.data.published != true) ||
+        lecturePublishGate(docId)
+      );
       allow delete: if isCoordinator() && resource.data.department == coordinatorDept();
     }
 
     match /exam_timetables/{docId} {
       allow read: if signedIn();
       allow create: if isCoordinator() &&
-        request.resource.data.department == coordinatorDept();
+        request.resource.data.department == coordinatorDept() &&
+        request.resource.data.published != true;
+      allow update: if isCoordinator() && resource.data.department == coordinatorDept() && (
+        !(request.resource.data.published == true && resource.data.published != true) ||
+        examPublishGate(docId)
+      );
+      allow delete: if isCoordinator() && resource.data.department == coordinatorDept();
     }
 
     // --- Natural-language / dept constraints ---

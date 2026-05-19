@@ -5,8 +5,9 @@ import { Button } from '../components/ui/button';
 import { auth, db } from '../firebase';
 import { subscribeCoordinatorThreads } from '../services/timetableReviews';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import FcomBot from '../components/FcomBot';
+import { initialsFromName } from '../utils/coordinatorProfile';
 
 const CoordinatorLayout = () => {
     const navigate = useNavigate();
@@ -25,28 +26,34 @@ const CoordinatorLayout = () => {
     }, [location.pathname]);
 
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                try {
-                    const docRef = doc(db, 'users', user.uid);
-                    const docSnap = await getDoc(docRef);
-                    if (docSnap.exists()) {
-                        const data = docSnap.data();
-                        if (data.role === 'coordinator' && data.accessStatus === 'revoked') {
-                            await signOut(auth);
-                            navigate('/auth?reason=revoked');
-                            return;
-                        }
-                        setUserData({ ...data, uid: user.uid });
-                    }
-                } catch (error) {
-                    console.error("Error fetching user data:", error);
-                }
-            } else {
+        let unsubDoc = () => {};
+        const unsubAuth = onAuthStateChanged(auth, (user) => {
+            unsubDoc();
+            unsubDoc = () => {};
+            if (!user) {
                 navigate('/');
+                return;
             }
+            const docRef = doc(db, 'users', user.uid);
+            unsubDoc = onSnapshot(
+                docRef,
+                async (docSnap) => {
+                    if (!docSnap.exists()) return;
+                    const data = docSnap.data();
+                    if (data.role === 'coordinator' && data.accessStatus === 'revoked') {
+                        await signOut(auth);
+                        navigate('/auth?reason=revoked');
+                        return;
+                    }
+                    setUserData({ ...data, uid: user.uid });
+                },
+                (error) => console.error('User profile subscription:', error)
+            );
         });
-        return () => unsubscribe();
+        return () => {
+            unsubAuth();
+            unsubDoc();
+        };
     }, [navigate]);
 
     useEffect(() => {
@@ -123,10 +130,36 @@ const CoordinatorLayout = () => {
                 </div>
 
                 <div className="px-3 py-6">
-                    {(isSidebarOpen || window.innerWidth < 1024) && (
-                        <div className="bg-white/10 rounded-xl p-4 mb-6 border border-white/5">
-                            <p className="text-[10px] font-bold text-blue-200 uppercase tracking-widest mb-1">Coordinator Role</p>
-                            <p className="font-bold text-white leading-tight truncate">{userData.department}</p>
+                    {(isSidebarOpen || (typeof window !== 'undefined' && window.innerWidth < 1024)) && (
+                        <div className="relative overflow-hidden rounded-2xl p-4 mb-6 border border-white/10 bg-gradient-to-br from-white/[0.14] to-white/[0.04] backdrop-blur-sm shadow-lg shadow-black/10">
+                            <div className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-[#579044]/25 blur-2xl pointer-events-none" />
+                            <div className="absolute -left-6 bottom-0 h-16 w-16 rounded-full bg-indigo-400/20 blur-xl pointer-events-none" />
+                            <div className="relative flex items-center gap-3">
+                                <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-amber-100 to-white flex items-center justify-center text-[#00008b] font-black text-sm shadow-md ring-2 ring-white/30 shrink-0">
+                                    {initialsFromName(userData.name)}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-[10px] font-bold text-blue-100/90 uppercase tracking-[0.15em]">Signed in</p>
+                                    <p className="font-black text-white leading-tight truncate text-[15px]">{userData.name || 'Coordinator'}</p>
+                                    <p className="text-xs font-semibold text-blue-100/85 truncate">{userData.department || 'Department'}</p>
+                                </div>
+                            </div>
+                            {isSidebarOpen && (userData.prefs?.phone || userData.prefs?.officeRoom) && (
+                                <div className="relative mt-4 pt-3 border-t border-white/10 space-y-1.5 text-[11px] text-blue-50/95">
+                                    {userData.prefs?.phone ? (
+                                        <p className="flex items-center gap-2 truncate">
+                                            <span className="text-blue-200/80 shrink-0">Phone</span>
+                                            <span className="font-semibold truncate">{userData.prefs.phone}</span>
+                                        </p>
+                                    ) : null}
+                                    {userData.prefs?.officeRoom ? (
+                                        <p className="flex items-center gap-2 truncate">
+                                            <span className="text-blue-200/80 shrink-0">Office</span>
+                                            <span className="font-semibold truncate">{userData.prefs.officeRoom}</span>
+                                        </p>
+                                    ) : null}
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -205,6 +238,9 @@ const CoordinatorLayout = () => {
                             </h1>
                             <p className="text-[11px] sm:text-xs text-slate-500 font-medium truncate max-w-[10rem] sm:max-w-xs">
                                 {userData.name || 'Coordinator'}
+                                {userData.prefs?.phone ? (
+                                    <span className="text-slate-400"> · {userData.prefs.phone}</span>
+                                ) : null}
                             </p>
                         </div>
                     </div>
@@ -214,8 +250,8 @@ const CoordinatorLayout = () => {
                             <span className="text-[10px] uppercase font-black text-[#579044] tracking-[0.2em] leading-none mb-1">Coordinator</span>
                             <span className="text-xs font-black text-slate-900 leading-none uppercase">{userData.department}</span>
                         </div>
-                        <div className="h-12 w-12 bg-gradient-to-br from-[#00008b] to-[#579044] rounded-xl flex items-center justify-center text-white font-black shadow-lg ring-2 ring-white shrink-0">
-                            {userData.name ? userData.name.charAt(0) : 'C'}
+                        <div className="h-12 w-12 bg-gradient-to-br from-[#00008b] to-[#579044] rounded-xl flex items-center justify-center text-white text-sm font-black shadow-lg ring-2 ring-white shrink-0">
+                            {initialsFromName(userData.name)}
                         </div>
                     </div>
                 </header>

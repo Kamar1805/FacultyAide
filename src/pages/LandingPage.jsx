@@ -138,7 +138,9 @@ const LandingPage = () => {
                         </div>
                         <div>
                             <span className="text-lg font-bold tracking-tight block leading-none">FacultyAide</span>
-                            <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/45">Teaching operations</span>
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50">
+                                Smart Classroom and Timetable Allocation System
+                            </span>
                         </div>
                     </motion.div>
 
@@ -148,18 +150,20 @@ const LandingPage = () => {
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.05, duration: 0.45 }}
                         >
-                            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-widest text-indigo-200 ring-1 ring-white/10 mb-6">
+                            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-widest text-indigo-200 ring-1 ring-white/10 mb-5">
                                 <Sparkles size={12} className="text-amber-300" />
-                                Built for coordinators & admins
+                                Faculty of Computing · Nile University of Nigeria
                             </div>
-                            <h1 className="text-4xl sm:text-5xl xl:text-[3.25rem] font-extrabold leading-[1.08] tracking-tight text-white">
-                                Smarter timetables.
-                                <span className="block text-white/55 font-semibold mt-2 text-[0.92em]">
-                                    Clear venues. One source of truth.
+                            <h1 className="text-3xl sm:text-4xl xl:text-[2.65rem] font-extrabold leading-[1.12] tracking-tight text-white">
+                                Smart Classroom and{' '}
+                                <span className="text-indigo-200">Timetable Allocation</span>{' '}
+                                System
+                                <span className="block mt-3 text-[0.45em] sm:text-[0.42em] font-semibold uppercase tracking-[0.12em] text-white/45">
+                                    Built for teaching operations — halls, slots, and one shared schedule
                                 </span>
                             </h1>
                             <p className="mt-6 text-base sm:text-lg text-slate-400 leading-relaxed max-w-md">
-                                Coordinate lecture schedules, venue capacity, and delivery modes (theory, labs, and online) in one place.
+                                Coordinate lecture timetables, exam sessions, hall capacity, and delivery modes (theory, labs, and online) in one place.
                             </p>
 
                             <div className="mt-10 space-y-3">
@@ -189,7 +193,7 @@ const LandingPage = () => {
                     </div>
 
                     <p className="relative z-10 text-[11px] font-medium text-white/35">
-                        © {new Date().getFullYear()} FacultyAide
+                        © {new Date().getFullYear()} FacultyAide · Faculty of Computing, Nile University of Nigeria
                     </p>
                 </div>
             </div>

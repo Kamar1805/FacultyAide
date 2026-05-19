@@ -4,8 +4,9 @@ import { Button } from '../../components/ui/button';
 import { Building2, Users, BookOpen, Activity, ArrowRight, ShieldCheck, School, Calendar, Radio } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase';
-import { collection, getCountFromServer, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
+import { collection, getCountFromServer, getDocs, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { motion } from 'framer-motion';
+import CoordinatorProfilePanel from '../../components/CoordinatorProfilePanel';
 
 function formatWhen(val) {
     if (val == null || val === '') return '—';
@@ -33,6 +34,7 @@ const DashboardOverview = () => {
     const [activityRows, setActivityRows] = useState([]);
     const [coordinators, setCoordinators] = useState([]);
     const [feedLoading, setFeedLoading] = useState(true);
+    const [profileCoord, setProfileCoord] = useState(null);
 
     useEffect(() => {
         const fetchStats = async () => {
@@ -69,8 +71,6 @@ const DashboardOverview = () => {
                     const logSnap = await getDocs(collection(db, 'activity_logs'));
                     logs = logSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).slice(0, 50);
                 }
-                const coordSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'coordinator')));
-
                 const lect = lectureSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
                     .filter((t) => t.published === true)
                     .sort((a, b) => String(b.publishedAt || b.updatedAt || '').localeCompare(String(a.publishedAt || a.updatedAt || '')))
@@ -81,14 +81,10 @@ const DashboardOverview = () => {
                     .sort((a, b) => String(b.publishedAt || '').localeCompare(String(a.publishedAt || '')))
                     .slice(0, 10);
 
-                const coordList = coordSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
-                    .sort((a, b) => String(b.lastActiveAt || '').localeCompare(String(a.lastActiveAt || '')));
-
                 if (!cancelled) {
                     setPublishedLectures(lect);
                     setPublishedExams(exams);
                     setActivityRows(logs);
-                    setCoordinators(coordList);
                 }
             } catch (e) {
                 console.error('Admin feed load:', e);
@@ -103,6 +99,21 @@ const DashboardOverview = () => {
         };
         loadFeed();
         return () => { cancelled = true; };
+    }, []);
+
+    useEffect(() => {
+        const q = query(collection(db, 'users'), where('role', '==', 'coordinator'));
+        const unsub = onSnapshot(
+            q,
+            (snap) => {
+                const coordList = snap.docs
+                    .map((d) => ({ id: d.id, ...d.data() }))
+                    .sort((a, b) => String(b.lastActiveAt || '').localeCompare(String(a.lastActiveAt || '')));
+                setCoordinators(coordList);
+            },
+            (e) => console.error('Coordinators snapshot:', e)
+        );
+        return () => unsub();
     }, []);
 
     const QuickAction = ({ title, desc, icon: Icon, onClick, color }) => (
@@ -127,18 +138,18 @@ const DashboardOverview = () => {
             <div className="relative overflow-hidden bg-slate-900 rounded-3xl p-6 md:p-12 text-white shadow-2xl">
                 <div className="absolute top-0 right-0 w-1/3 h-full bg-gradient-to-l from-indigo-500/20 to-transparent pointer-events-none" />
                 <div className="relative z-10 max-w-2xl">
-                    <div className="flex items-center gap-2 mb-4">
-                        <span className="px-3 py-1 bg-indigo-500 text-[10px] font-black uppercase tracking-widest rounded-full">Admin Control</span>
-                        <div className="h-1 w-1 rounded-full bg-slate-500" />
+                    <div className="flex items-center gap-2 mb-4 flex-wrap">
+                        <span className="px-3 py-1 bg-indigo-500 text-[10px] font-black uppercase tracking-widest rounded-full">Administrator</span>
+                        <div className="h-1 w-1 rounded-full bg-slate-500 hidden sm:block" />
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
                     </div>
                     <h1 className="text-4xl md:text-5xl font-black tracking-tighter mb-4 leading-tight">
-                        Command Center <br />
-                        <span className="text-indigo-400">Institutional Infrastructure.</span>
+                        Manage venues, lecturers,{' '}
+                        <span className="text-indigo-400">&amp; timetables</span>
                     </h1>
                     <p className="text-slate-400 font-medium text-sm md:text-base leading-relaxed">
-                        Welcome back, Administrator. You have full oversight of Nile University's academic assets.
-                        Configure halls, manage faculty staff, and oversee curriculum distribution across 6 active departments.
+                        Welcome back. Use the sidebar to add and edit halls, maintain lecturer records, update courses,
+                        approve coordinator timetables, and review what is published live.
                     </p>
                 </div>
             </div>
@@ -180,8 +191,8 @@ const DashboardOverview = () => {
             {/* Critical Modules */}
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
-                    <h2 className="text-xl font-black text-slate-900 tracking-tight">Management Modules</h2>
-                    <Button variant="ghost" size="sm" className="text-xs font-bold text-indigo-600">View All Systems</Button>
+                    <h2 className="text-xl font-black text-slate-900 tracking-tight">Quick links</h2>
+                    <Button variant="ghost" size="sm" className="text-xs font-bold text-indigo-600">Browse all pages</Button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <QuickAction
@@ -322,7 +333,7 @@ const DashboardOverview = () => {
                     <CardTitle className="text-lg flex items-center gap-2">
                         <Users size={20} className="text-sky-600" /> Coordinators pulse
                     </CardTitle>
-                    <CardDescription>Last routed path &amp; ping from synced sessions.</CardDescription>
+                    <CardDescription>Live from Firestore — click a row for full profile (phone, office, bio, prefs).</CardDescription>
                 </CardHeader>
                 <CardContent className="p-0 overflow-x-auto">
                     <table className="w-full text-left text-sm min-w-[600px]">
@@ -330,7 +341,7 @@ const DashboardOverview = () => {
                             <tr className="text-[10px] font-black uppercase text-slate-400 border-b">
                                 <th className="px-4 py-3">Coordinator</th>
                                 <th className="px-4 py-3">Dept</th>
-                                <th className="px-4 py-3">Email</th>
+                                <th className="px-4 py-3">Contact</th>
                                 <th className="px-4 py-3">Last active</th>
                                 <th className="px-4 py-3">Last route</th>
                                 <th className="px-4 py-3">Status</th>
@@ -338,10 +349,26 @@ const DashboardOverview = () => {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                             {coordinators.map((c) => (
-                                <tr key={c.id || c.uid} className="hover:bg-slate-50/70">
-                                    <td className="px-4 py-3 font-bold text-slate-800">{c.name}</td>
+                                <tr
+                                    key={c.id || c.uid}
+                                    className="hover:bg-indigo-50/60 cursor-pointer transition-colors group"
+                                    onClick={() => setProfileCoord({ id: c.id, ...c })}
+                                >
+                                    <td className="px-4 py-3 font-bold text-slate-800">
+                                        {c.name}
+                                        <span className="ml-2 text-[9px] font-black uppercase text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity">View →</span>
+                                    </td>
                                     <td className="px-4 py-3 text-xs text-slate-600">{c.department}</td>
-                                    <td className="px-4 py-3 text-xs text-slate-500">{c.email}</td>
+                                    <td className="px-4 py-3 text-xs text-slate-600">
+                                        <div className="font-medium text-slate-700">{c.email || '—'}</div>
+                                        {(c.prefs?.phone || c.prefs?.officeRoom) && (
+                                            <div className="text-[11px] text-slate-500 mt-0.5">
+                                                {c.prefs?.phone ? `${c.prefs.phone}` : ''}
+                                                {c.prefs?.phone && c.prefs?.officeRoom ? ' · ' : ''}
+                                                {c.prefs?.officeRoom || ''}
+                                            </div>
+                                        )}
+                                    </td>
                                     <td className="px-4 py-3 text-xs">{formatWhen(c.lastActiveAt)}</td>
                                     <td className="px-4 py-3 text-xs font-mono text-slate-500">{c.lastVisitedPath || '—'}</td>
                                     <td className="px-4 py-3"><span className={`text-[10px] font-black uppercase px-2 py-1 rounded-full ${c.accessStatus === 'revoked' ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-900'}`}>{c.accessStatus || 'active'}</span></td>
@@ -355,6 +382,11 @@ const DashboardOverview = () => {
                 </CardContent>
             </Card>
 
+            {/* Coordinator profile overlay */}
+            {profileCoord ? (
+                <CoordinatorProfilePanel userDoc={profileCoord} onClose={() => setProfileCoord(null)} />
+            ) : null}
+
             {/* System Status Footer */}
             <div className="bg-white border border-slate-200 rounded-3xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 shadow-sm">
                 <div className="flex items-center gap-4">
@@ -362,12 +394,14 @@ const DashboardOverview = () => {
                         <Activity size={24} />
                     </div>
                     <div>
-                        <h4 className="font-bold text-slate-900">System Infrastructure: <span className="text-emerald-600">Optimal</span></h4>
-                        <p className="text-xs text-slate-500 font-medium">All database shards and AI models are operational.</p>
+                        <h4 className="font-bold text-slate-900">Backend status — <span className="text-emerald-600">Connected</span></h4>
+                        <p className="text-xs text-slate-500 font-medium">
+                            Staff sign-in uses Firebase Auth. Data lives in Firestore. Coordinators publish timetables only after your review workflow allows it.
+                        </p>
                     </div>
                 </div>
                 <div className="flex gap-2">
-                    {['Auth', 'DB', 'Engine'].map(svc => (
+                    {['Sign-in', 'Database', 'Timetables'].map((svc) => (
                         <div key={svc} className="px-3 py-1.5 bg-slate-50 border border-slate-100 rounded-lg flex items-center gap-2">
                             <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                             <span className="text-[10px] font-bold text-slate-600">{svc}</span>

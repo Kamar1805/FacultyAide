@@ -102,6 +102,20 @@ function examTimeToMs(dateStr, hhmm) {
     return Number.isNaN(x) ? null : x;
 }
 
+export function normalizePersonTag(s) {
+    return String(s || '')
+        .toLowerCase()
+        .replace(/\./g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+export function examInvigilatorNorms(ex) {
+    const raw = ex.invigilatorNames ?? ex.invigilators ?? [];
+    const arr = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',').map((x) => x.trim()) : [];
+    return [...new Set(arr.map(normalizePersonTag).filter(Boolean))];
+}
+
 function examSlotWindow(ex) {
     const startMs = examTimeToMs(ex.date, ex.startTime);
     const dur = parseInt(ex.durationMins, 10) || 90;
@@ -115,6 +129,11 @@ function examSlotWindow(ex) {
         level: String(ex.level || ''),
         code: String(ex.courseCode || '').trim(),
         label: `${ex.courseCode || '?'} · ${ex.date} ${ex.startTime}`,
+        invNorms: examInvigilatorNorms(ex),
+        blkNorms:
+            Array.isArray(ex.invigilateBlockedNorms) && ex.invigilateBlockedNorms.length
+                ? new Set(ex.invigilateBlockedNorms.map(normalizePersonTag).filter(Boolean))
+                : null,
     };
 }
 
@@ -124,6 +143,7 @@ function examSlotWindow(ex) {
 export function analyzeExamScheduleBundles(bundles) {
     const venueClashes = [];
     const levelClashes = [];
+    const invigilatorClashes = [];
     const norm = Array.isArray(bundles) ? bundles : [];
 
     for (let i = 0; i < norm.length; i++) {
@@ -171,11 +191,55 @@ export function analyzeExamScheduleBundles(bundles) {
                             fix: 'Same cohort cannot sit two papers at once — move one exam to another slot or date.',
                         });
                     }
+
+                    if (sa.invNorms.length && sb.invNorms.length && sa.startMs < sb.endMs && sb.startMs < sa.endMs) {
+                        const shared = sa.invNorms.filter((n) => sb.invNorms.includes(n));
+                        if (shared.length) {
+                            invigilatorClashes.push({
+                                type: 'invigilator',
+                                date: sa.date,
+                                invigilator: shared[0],
+                                a: `${norm[i].label}: ${sa.label}`,
+                                b: `${norm[j].label}: ${sb.label}`,
+                                fix: 'Assign different invigilators or reschedule so the same staff member does not overlap.',
+                            });
+                        }
+                    }
                 }
             }
         }
     }
 
-    const merged = [...venueClashes, ...levelClashes];
-    return { hasClashes: merged.length > 0, clashes: merged, venueClashes, levelClashes };
+    /** Own-exam guard: lecturers must not invigilate a paper for a course they teach */
+    const selfInv = [];
+    for (const bundle of norm) {
+        for (const ex of bundle.exams || []) {
+            const norms = examInvigilatorNorms(ex);
+            const blk = Array.isArray(ex.invigilateBlockedNorms)
+                ? ex.invigilateBlockedNorms.map(normalizePersonTag).filter(Boolean)
+                : [];
+            if (!norms.length || !blk.length) continue;
+            for (const iv of norms) {
+                if (blk.includes(iv)) {
+                    selfInv.push({
+                        type: 'invigilate_teacher',
+                        date: String(ex.date || ''),
+                        course: String(ex.courseCode || ''),
+                        label: `${ex.courseCode || '?'} · ${ex.date} ${ex.startTime}`,
+                        fix: 'Remove this lecturer from invigilation for this exam — they teach this offering.',
+                    });
+                }
+            }
+        }
+    }
+
+    const merged = [...venueClashes, ...levelClashes, ...invigilatorClashes, ...selfInv];
+    return {
+        hasClashes: merged.length > 0,
+        clashes: merged,
+        venueClashes,
+        levelClashes,
+        invigilatorClashes,
+        invigilateTeacherClashes: selfInv,
+    };
 }

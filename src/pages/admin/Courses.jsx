@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
-import { Plus, Users, BookOpen, Layers, X, Check, Trash2, Clock, Search, Edit2, ChevronRight, Filter, Ban } from 'lucide-react';
+import { Plus, Users, BookOpen, Layers, X, Check, Trash2, Clock, Search, Edit2, ChevronRight, Filter, Ban, FileWarning } from 'lucide-react';
 import InstructionGuide from '../../components/InstructionGuide';
 import ConfirmationDialog from '../../components/ConfirmationDialog';
+import { catalogDeliveryExcludedFromExamByDefault } from '../../utils/examScheduleRules';
 import { db } from '../../firebase';
 import { collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, updateDoc } from 'firebase/firestore';
 
@@ -23,6 +24,20 @@ const CourseCard = ({ course, onEdit, onDelete }) => (
                             <Ban size={10} /> excluded from timetable
                         </span>
                     )}
+                    {!course.excludeFromTimetable && course.excludeFromExamTimetable && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-violet-50 text-violet-900 text-[9px] font-black uppercase tracking-wide border border-violet-200">
+                            <FileWarning size={10} /> excluded from exams
+                        </span>
+                    )}
+                    {!course.excludeFromTimetable &&
+                        catalogDeliveryExcludedFromExamByDefault(course.type) && (
+                            <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-50 text-sky-900 text-[9px] font-black uppercase tracking-wide border border-sky-200"
+                                title="Lab or online catalog delivery stays out of the written finals generator automatically."
+                            >
+                                no written finals (delivery)
+                            </span>
+                        )}
                 </div>
             <div className="flex items-center gap-2">
                 {course.creditUnit && (
@@ -93,7 +108,9 @@ const Courses = () => {
         level: '100',
         semester: 'First',
         creditUnit: '2',
+        type: 'Theory',
         excludeFromTimetable: false,
+        excludeFromExamTimetable: false,
     });
 
     // Delete confirmation state
@@ -142,7 +159,9 @@ const Courses = () => {
             level: course.level,
             semester: course.semester || 'First',
             creditUnit: course.creditUnit || '2',
+            type: course.type || 'Theory',
             excludeFromTimetable: !!course.excludeFromTimetable,
+            excludeFromExamTimetable: !!course.excludeFromExamTimetable,
         });
         setLecturerSearch(course.lecturer); // Pre-fill search with current lecturer
         setEditId(course.id);
@@ -176,7 +195,10 @@ const Courses = () => {
                 level: newCourse.level,
                 semester: newCourse.semester,
                 creditUnit: newCourse.creditUnit,
+                type: newCourse.type || 'Theory',
                 excludeFromTimetable: !!newCourse.excludeFromTimetable,
+                excludeFromExamTimetable:
+                    !!(newCourse.excludeFromExamTimetable && !newCourse.excludeFromTimetable),
                 updatedAt: new Date().toISOString()
             };
 
@@ -194,7 +216,15 @@ const Courses = () => {
 
             setIsAdding(false);
             setNewCourse({
-                code: '', title: '', department: '', level: '100', semester: 'First', creditUnit: '2', excludeFromTimetable: false,
+                code: '',
+                title: '',
+                department: '',
+                level: '100',
+                semester: 'First',
+                creditUnit: '2',
+                type: 'Theory',
+                excludeFromTimetable: false,
+                excludeFromExamTimetable: false,
             });
             setLecturerSearch('');
             setIsEditing(false);
@@ -248,10 +278,11 @@ const Courses = () => {
             <InstructionGuide
                 title="Curriculum Overview"
                 steps={[
-                    "Define the course catalog with Code, Title, Department, and Level.",
+                    "Define the course catalog with Code, Title, Department, Level, and Default delivery mode (lecture versus lab/practical/online — this drives timetable matching and hides written finals unless it is Lecture).",
                     "Set the Semester (First/Second) for each course.",
-                    "Use Exclude from timetable when a module must stay in the catalog but never be auto-scheduled (e.g. project-only, withdrawn offering).",
-                    "Detailed configurations (Lecturer, Venue, Sections) are handled by the Coordinator."
+                    'Exclude from lecture timetable keeps a row in the catalog but removes it from coordinator lecture generation (and OR-Tools).',
+                    'Exclude from written exam timetable skips only the centralized finals planner; use for theory offerings assessed without seated exams. Practical / Physics / Computing / Online deliveries never auto-enter finals.',
+                    "Detailed lecturer, capacity, and section setup is handled by the Coordinator on Lecture Timetable.",
                 ]}
             />
 
@@ -262,7 +293,21 @@ const Courses = () => {
                 </div>
                 {!isAdding ? (
                     <Button
-                        onClick={() => { setIsAdding(true); setIsEditing(false); setNewCourse({ code: '', title: '', department: '', level: '100', semester: 'First', creditUnit: '2', excludeFromTimetable: false }); }}
+                        onClick={() => {
+                            setIsAdding(true);
+                            setIsEditing(false);
+                            setNewCourse({
+                                code: '',
+                                title: '',
+                                department: '',
+                                level: '100',
+                                semester: 'First',
+                                creditUnit: '2',
+                                type: 'Theory',
+                                excludeFromTimetable: false,
+                                excludeFromExamTimetable: false,
+                            });
+                        }}
                         className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200 transition-all hover:scale-[1.02] active:scale-95 px-6 font-bold"
                     >
                         <Plus className="mr-2 h-5 w-5" /> Add New Course
@@ -459,6 +504,27 @@ const Courses = () => {
                                         </div>
                                     </div>
                                 </div>
+                                <div className="space-y-3 md:col-span-2">
+                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                        Catalog delivery mode
+                                    </label>
+                                    <div className="relative">
+                                        <select
+                                            className="flex h-12 w-full appearance-none rounded-xl border border-slate-200 bg-slate-50/50 px-4 text-sm font-semibold text-slate-700 focus:bg-white focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all cursor-pointer"
+                                            value={newCourse.type || 'Theory'}
+                                            onChange={(e) => setNewCourse({ ...newCourse, type: e.target.value })}
+                                        >
+                                            <option value="Theory">Lecture hall (typically written finals)</option>
+                                            <option value="Online">Online</option>
+                                            <option value="Computing Practical">Computing practical</option>
+                                            <option value="Physics Practical">Physics practical</option>
+                                            <option value="Practical">General lab / practical</option>
+                                        </select>
+                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-500">
+                                            <ChevronRight className="h-4 w-4 rotate-90" />
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
 
                             <div className="rounded-xl border border-amber-200/90 bg-amber-50/40 p-4 md:p-5">
@@ -467,12 +533,43 @@ const Courses = () => {
                                         type="checkbox"
                                         className="mt-1 rounded border-slate-300 text-amber-700 focus:ring-amber-500/30"
                                         checked={!!newCourse.excludeFromTimetable}
-                                        onChange={(e) => setNewCourse({ ...newCourse, excludeFromTimetable: e.target.checked })}
+                                        onChange={(e) =>
+                                            setNewCourse((prev) => ({
+                                                ...prev,
+                                                excludeFromTimetable: e.target.checked,
+                                                excludeFromExamTimetable: e.target.checked ? false : prev.excludeFromExamTimetable,
+                                            }))
+                                        }
                                     />
                                     <span>
-                                        <span className="block text-sm font-black text-slate-900 uppercase tracking-wide">Exclude from timetable generation</span>
+                                        <span className="block text-sm font-black text-slate-900 uppercase tracking-wide">
+                                            Exclude from lecture timetable generation
+                                        </span>
                                         <span className="block text-xs text-slate-600 mt-1.5 leading-relaxed font-medium">
-                                            Course remains in the catalog but is hidden from coordinator lecture and exam timetable builders (and omitted from OR-Tools).
+                                            Curriculum row stays visible but coordinators cannot auto-place it into lecture slots; OR-Tools also skips it.
+                                        </span>
+                                    </span>
+                                </label>
+                            </div>
+
+                            <div className={`rounded-xl border border-violet-200/90 bg-violet-50/30 p-4 md:p-5 ${newCourse.excludeFromTimetable ? 'opacity-50' : ''}`}>
+                                <label className={`flex items-start gap-3 ${newCourse.excludeFromTimetable ? 'cursor-not-allowed' : 'cursor-pointer'} group`}>
+                                    <input
+                                        type="checkbox"
+                                        disabled={!!newCourse.excludeFromTimetable}
+                                        className="mt-1 rounded border-violet-300 text-violet-700 focus:ring-violet-500/30 disabled:opacity-45"
+                                        checked={!!newCourse.excludeFromExamTimetable}
+                                        onChange={(e) =>
+                                            setNewCourse({ ...newCourse, excludeFromExamTimetable: e.target.checked })
+                                        }
+                                    />
+                                    <span>
+                                        <span className="block text-sm font-black text-violet-950 uppercase tracking-wide">
+                                            Exclude from written exam timetable only
+                                        </span>
+                                        <span className="block text-xs text-violet-900/80 mt-1.5 leading-relaxed font-medium">
+                                            Omit this course from the coordinator exam generator without blocking lecture scheduling. Practical, lab,
+                                            and online deliveries are already suppressed automatically unless you marked them Lecture.
                                         </span>
                                     </span>
                                 </label>

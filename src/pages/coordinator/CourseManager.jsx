@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
-import { BookOpen, MapPin, Users, Filter, Clock } from 'lucide-react';
+import { BookOpen, MapPin, Users, Filter, Clock, FileWarning } from 'lucide-react';
 import { useOutletContext } from 'react-router-dom';
 import InstructionGuide from '../../components/InstructionGuide';
 import { db } from '../../firebase';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { catalogDeliveryExcludedFromExamByDefault } from '../../utils/examScheduleRules';
 
 const CourseManager = () => {
     const { userData } = useOutletContext();
@@ -46,7 +47,7 @@ const CourseManager = () => {
                 steps={[
                     "A read-only view of all courses assigned to your department.",
                     "Review course codes, units, and levels sorted by semester.",
-                    "Contact the Faculty Administrator if you notice a missing or incorrectly configured course."
+                    "Contact the Faculty Administrator if you notice a missing or incorrectly configured course (especially delivery mode: lab / practical courses do not automatically receive written-final rows).",
                 ]}
             />
 
@@ -137,9 +138,19 @@ const CourseManager = () => {
                                                                             Common
                                                                         </span>
                                                                     )}
+                                                                    {catalogDeliveryExcludedFromExamByDefault(course.type) && (
+                                                                        <span className="text-[10px] uppercase font-bold tracking-widest text-sky-700 bg-sky-50 px-2 py-1 rounded border border-sky-100">
+                                                                            No seated finals (catalog)
+                                                                        </span>
+                                                                    )}
+                                                                    {course.excludeFromExamTimetable && (
+                                                                        <span className="flex items-center gap-1 text-[10px] uppercase font-bold tracking-widest text-violet-900 bg-violet-50 px-2 py-1 rounded border border-violet-100">
+                                                                            <FileWarning size={10} /> Exam gen off (admin)
+                                                                        </span>
+                                                                    )}
                                                                     {course.excludeFromTimetable && (
                                                                         <span className="text-[10px] uppercase font-bold tracking-widest text-amber-950 bg-amber-100 px-2 py-1 rounded border border-amber-200">
-                                                                            Not in timetable gen
+                                                                            Not in lecture gen
                                                                         </span>
                                                                     )}
                                                                 </div>

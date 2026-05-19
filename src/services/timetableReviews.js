@@ -39,6 +39,8 @@ export async function createReviewThread({
     kind,
     title,
     snapshot,
+    linkedSavedLectureId = '',
+    linkedExamTimetableId = '',
 }) {
     const ref = await addDoc(collection(db, THREADS), {
         coordinatorUid,
@@ -51,6 +53,10 @@ export async function createReviewThread({
         status: 'submitted',
         pendingAdminAttention: true,
         pendingCoordinatorAttention: false,
+        publishApproved: false,
+        linkedSavedLectureId: linkedSavedLectureId || '',
+        linkedExamTimetableId: linkedExamTimetableId || '',
+        approvalNote: '',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
     });
@@ -78,6 +84,19 @@ export async function addThreadMessage(threadId, { senderRole, senderUid, sender
 export async function updateThreadStatus(threadId, status) {
     await updateDoc(doc(db, THREADS, threadId), {
         status,
+        updatedAt: serverTimestamp(),
+    });
+}
+
+/** Marks thread as approved for publication; coordinator may then publish the linked timetable doc. */
+export async function approveThreadForPublish(threadId, approvalNote = '') {
+    await updateDoc(doc(db, THREADS, threadId), {
+        publishApproved: true,
+        approvalNote: (approvalNote || '').trim(),
+        approvedAt: new Date().toISOString(),
+        status: 'approved_for_publish',
+        pendingAdminAttention: false,
+        pendingCoordinatorAttention: true,
         updatedAt: serverTimestamp(),
     });
 }
